@@ -1,0 +1,28 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model UserDeviceToken {
+  id         String  @id @default(cuid()) @db.VarChar(191)
+  userId     String  @db.VarChar(191)
+  email      String  @db.VarChar(191)
+  role       String  @db.VarChar(191)
+  token      String  @unique @db.VarChar(512)
+  platform   String? @db.VarChar(191)
+  deviceId   String? @db.VarChar(191)
+  deviceName String? @db.VarChar(191)
+  active    Boolean  @default(true)
+  lastUsedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([email])
+  @@index([active])
+  @@unique([userId, deviceId])
+}

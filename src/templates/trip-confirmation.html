@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirmación de viaje</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f7fa;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background-color:#16a34a;padding:30px 40px;text-align:center;">
+              <h1 style="color:#ffffff;margin:0;font-size:24px;">Carpooling</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px;">
+              <h2 style="color:#1e293b;margin:0 0 20px;">Viaje confirmado ✅</h2>
+              <p style="color:#475569;font-size:16px;line-height:1.6;">
+                Hola {{userName}}, tu viaje ha sido confirmado. Aquí tienes los detalles:
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background-color:#f8fafc;border-radius:8px;padding:20px;">
+                <tr><td style="padding:8px 20px;color:#64748b;font-size:14px;">Origen</td><td style="padding:8px 20px;color:#1e293b;font-size:16px;font-weight:bold;">{{origin}}</td></tr>
+                <tr><td style="padding:8px 20px;color:#64748b;font-size:14px;">Destino</td><td style="padding:8px 20px;color:#1e293b;font-size:16px;font-weight:bold;">{{destination}}</td></tr>
+                <tr><td style="padding:8px 20px;color:#64748b;font-size:14px;">Fecha</td><td style="padding:8px 20px;color:#1e293b;font-size:16px;font-weight:bold;">{{date}}</td></tr>
+                <tr><td style="padding:8px 20px;color:#64748b;font-size:14px;">Hora</td><td style="padding:8px 20px;color:#1e293b;font-size:16px;font-weight:bold;">{{time}}</td></tr>
+                <tr><td style="padding:8px 20px;color:#64748b;font-size:14px;">Asientos</td><td style="padding:8px 20px;color:#1e293b;font-size:16px;font-weight:bold;">{{seats}}</td></tr>
+                <tr><td style="padding:8px 20px;color:#64748b;font-size:14px;">Precio</td><td style="padding:8px 20px;color:#1e293b;font-size:16px;font-weight:bold;">{{price}} €</td></tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
+                <tr>
+                  <td align="center">
+                    <a href="{{frontendUrl}}/trips/{{tripId}}" style="background-color:#16a34a;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:16px;display:inline-block;font-weight:bold;">Ver detalles del viaje</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f8fafc;padding:20px 40px;text-align:center;">
+              <p style="color:#94a3b8;font-size:13px;margin:0;">© 2025 Carpooling. Todos los derechos reservados.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
