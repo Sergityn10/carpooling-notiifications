@@ -8,7 +8,24 @@ const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:4001",
+      "http://localhost:3000",
+      "https://www.youconnext.es",
+      "https://app.youconnext.es",
+      "https://youconnext-nextjs.vercel.app",
+      "https://carpooling-webapp-ten.vercel.app",
+      "https://youconnext-landing-page.vercel.app",
+    ], // Cambia esto a la URL de tu frontend
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    credentials: true, // Permite el uso de cookies
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -28,7 +45,9 @@ app.use(notFound);
 app.use(errorHandler);
 
 app.listen(config.port, () => {
-  console.log(`Notifications service running on port ${config.port} [${config.nodeEnv}]`);
+  console.log(
+    `Notifications service running on port ${config.port} [${config.nodeEnv}]`,
+  );
 });
 
 module.exports = app;

@@ -10,6 +10,8 @@ router.post("/send", emailController.sendRawEmail);
 
 router.post("/send/template", emailController.sendTemplatedEmail);
 
+router.post("/send/suggestion", emailController.sendSuggestionReceived);
+
 router.post("/send/batch", emailController.sendBatchEmails);
 
 module.exports = router;

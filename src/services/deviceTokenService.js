@@ -42,6 +42,19 @@ function listUserDeviceTokens(userId) {
   });
 }
 
+function listDeviceTokensByUserId(userId) {
+  return prisma.userDeviceToken.findMany({
+    where: { userId },
+    orderBy: { lastUsedAt: "desc" },
+  });
+}
+
+function listAllDeviceTokens() {
+  return prisma.userDeviceToken.findMany({
+    orderBy: { lastUsedAt: "desc" },
+  });
+}
+
 async function deactivateDeviceToken(userId, token) {
   const result = await prisma.userDeviceToken.updateMany({
     where: { userId, token },
@@ -72,6 +85,8 @@ async function getActiveTokensByUserId(userId) {
 module.exports = {
   registerDeviceToken,
   listUserDeviceTokens,
+  listDeviceTokensByUserId,
+  listAllDeviceTokens,
   deactivateDeviceToken,
   deactivateDevice,
   getActiveTokensByUserId,

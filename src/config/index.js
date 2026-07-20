@@ -11,7 +11,8 @@ const config = {
     fromName: process.env.SMTP_FROM_NAME || "Carpooling",
     fromEmail: process.env.SMTP_FROM_EMAIL || "noreply@carpooling.com",
   },
-  frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  adminEmail: process.env.ADMIN_EMAIL || "",
+  adminSuggestionsUrl: process.env.ADMIN_SUGGESTIONS_URL || "",
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID || "",
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL || "",

@@ -5,7 +5,13 @@ async function registerDeviceToken(req, res, next) {
     console.log("registerDeviceToken", req.body);
     const { token, platform, deviceId, deviceName } = req.body;
 
-    if (!token) return res.status(400).json({ error: "El campo 'token' es obligatorio" });
+    if (!token)
+      return res.status(400).json({ error: "El campo 'token' es obligatorio" });
+    if (!req.user || !req.user.userId || !req.user.email || !req.user.role) {
+      return res
+        .status(401)
+        .json({ error: "Token inválido o información de usuario incompleta" });
+    }
 
     const deviceToken = await deviceTokenService.registerDeviceToken(req.user, {
       token,
@@ -22,8 +28,36 @@ async function registerDeviceToken(req, res, next) {
 
 async function listMyDeviceTokens(req, res, next) {
   try {
-    const devices = await deviceTokenService.listUserDeviceTokens(req.user.userId);
+    const devices = await deviceTokenService.listUserDeviceTokens(
+      req.user.userId,
+    );
     res.status(200).json({ success: true, devices });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function listAllDeviceTokens(req, res, next) {
+  try {
+    const devices = await deviceTokenService.listAllDeviceTokens();
+    res.status(200).json({ success: true, devices });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function listUserDeviceTokensAdmin(req, res, next) {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ error: "El parámetro 'userId' es obligatorio" });
+    }
+
+    const devices = await deviceTokenService.listDeviceTokensByUserId(userId);
+    res.status(200).json({ success: true, userId, devices });
   } catch (error) {
     next(error);
   }
@@ -34,14 +68,17 @@ async function deactivateDeviceToken(req, res, next) {
     const { token, deviceId } = req.body;
 
     if (!token && !deviceId) {
-      return res.status(400).json({ error: "Se requiere 'token' o 'deviceId'" });
+      return res
+        .status(400)
+        .json({ error: "Se requiere 'token' o 'deviceId'" });
     }
 
     const removed = token
       ? await deviceTokenService.deactivateDeviceToken(req.user.userId, token)
       : await deviceTokenService.deactivateDevice(req.user.userId, deviceId);
 
-    if (!removed) return res.status(404).json({ error: "Dispositivo no encontrado" });
+    if (!removed)
+      return res.status(404).json({ error: "Dispositivo no encontrado" });
 
     res.status(200).json({ success: true });
   } catch (error) {
@@ -52,5 +89,7 @@ async function deactivateDeviceToken(req, res, next) {
 module.exports = {
   registerDeviceToken,
   listMyDeviceTokens,
+  listAllDeviceTokens,
+  listUserDeviceTokensAdmin,
   deactivateDeviceToken,
 };

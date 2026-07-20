@@ -5,3 +5,4 @@ node_modules/
 carpooling-notifications-firebase.json
 prisma/dev.db
 prisma/dev.db-journal
+docs/

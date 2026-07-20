@@ -24,6 +24,22 @@ const TEMPLATES = {
     subject: "Restablece tu contraseña - Carpooling",
     file: "password-reset.html",
   },
+  suggestion_received: {
+    subject: "Nueva sugerencia de empresa - Carpooling",
+    file: "suggestion-received.html",
+  },
+  trip_completed: {
+    subject: "Tu viaje ha finalizado - Carpooling",
+    file: "trip-completed.html",
+  },
+  trip_started: {
+    subject: "Tu viaje ha comenzado - Carpooling",
+    file: "trip-started.html",
+  },
+  trip_booked: {
+    subject: "Nueva reserva en tu viaje - Carpooling",
+    file: "trip-booked.html",
+  },
 };
 
 function loadTemplateFile(filename) {
@@ -53,11 +69,16 @@ function renderTemplate(templateName, data = {}) {
   const template = TEMPLATES[templateName];
   if (!template) {
     const available = Object.keys(TEMPLATES).join(", ");
-    throw new Error(`Template "${templateName}" not found. Available: ${available}`);
+    throw new Error(
+      `Template "${templateName}" not found. Available: ${available}`,
+    );
   }
 
   const rawHtml = loadTemplateFile(template.file);
-  const html = interpolate(rawHtml, { ...data, frontendUrl: data.frontendUrl || "" });
+  const html = interpolate(rawHtml, {
+    ...data,
+    frontendUrl: data.frontendUrl || "",
+  });
   const text = htmlToText(html);
 
   return {
