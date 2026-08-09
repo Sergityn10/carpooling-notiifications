@@ -28,7 +28,8 @@
     "express": "^5.2.1",
     "firebase-admin": "^14.1.0",
     "jsonwebtoken": "^9.0.3",
-    "nodemailer": "^9.0.3"
+    "nodemailer": "^9.0.3",
+    "amqplib": "^0.10.7"
   },
   "devDependencies": {
     "prisma": "^6.19.3"

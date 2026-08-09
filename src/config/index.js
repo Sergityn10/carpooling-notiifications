@@ -13,6 +13,8 @@ const config = {
   },
   adminEmail: process.env.ADMIN_EMAIL || "",
   adminSuggestionsUrl: process.env.ADMIN_SUGGESTIONS_URL || "",
+  frontendUrl: process.env.FRONTEND_URL || "",
+  rabbitmqUrl: process.env.RABBITMQ_URL || "",
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID || "",
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL || "",

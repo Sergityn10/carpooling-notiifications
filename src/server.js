@@ -5,6 +5,7 @@ const emailRoutes = require("./routes/emailRoutes");
 const pushRoutes = require("./routes/pushRoutes");
 const deviceTokenRoutes = require("./routes/deviceTokenRoutes");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
+const { startConsumer, stopConsumer } = require("./services/rabbitmqConsumer");
 
 const app = express();
 
@@ -48,6 +49,17 @@ app.listen(config.port, () => {
   console.log(
     `Notifications service running on port ${config.port} [${config.nodeEnv}]`,
   );
+  startConsumer();
+});
+
+process.on("SIGINT", async () => {
+  await stopConsumer();
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  await stopConsumer();
+  process.exit(0);
 });
 
 module.exports = app;
