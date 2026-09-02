@@ -18,6 +18,7 @@ app.use(
       "http://localhost:3000",
       "https://www.youconnext.es",
       "https://app.youconnext.es",
+"https://admin.youconnext.es",
       "https://youconnext-nextjs.vercel.app",
       "https://carpooling-webapp-ten.vercel.app",
       "https://youconnext-landing-page.vercel.app",
