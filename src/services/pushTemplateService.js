@@ -1,7 +1,7 @@
 const PUSH_TEMPLATES = {
   trip_completed: {
     title: "Viaje completado 🎉",
-    body: "Hola {{userName}}, tu viaje {{origin}} → {{destination}} ha finalizado. ¡Gracias por usar Carpooling!",
+    body: "Hola {{userName}}, tu viaje {{origin}} → {{destination}} ha finalizado. ¡Gracias por usar YouConnext!",
     data: {
       type: "trip_completed",
       tripId: "{{tripId}}",
