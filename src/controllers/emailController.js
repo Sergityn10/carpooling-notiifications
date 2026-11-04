@@ -1,6 +1,8 @@
 const emailService = require("../services/emailService");
 const templateService = require("../services/templateService");
+const notificationQueue = require("../services/notificationQueue");
 const config = require("../config");
+const { isValidEmail, sanitizeString } = require("../security");
 
 const VALID_TEMPLATES = [
   "welcome",
@@ -12,6 +14,7 @@ const VALID_TEMPLATES = [
   "trip_completed",
   "trip_started",
   "trip_booked",
+  "enterprise_invitation",
 ];
 
 const TEMPLATE_REQUIRED_FIELDS = {
@@ -82,11 +85,8 @@ const TEMPLATE_REQUIRED_FIELDS = {
     "seatsRemaining",
     "tripId",
   ],
+  enterprise_invitation: ["enterpriseName", "roleTitle", "invitationLink"],
 };
-
-function validateEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
 
 function validateTemplateFields(template, data) {
   const required = TEMPLATE_REQUIRED_FIELDS[template] || [];
@@ -97,21 +97,32 @@ function validateTemplateFields(template, data) {
   return missing;
 }
 
+/**
+ * Envío de email basado en plantilla.
+ * Soporta modo asíncrono no bloqueante (202 Accepted) para absorber concurrencia.
+ */
 async function sendTemplatedEmail(req, res, next) {
   try {
-    const { to, template, data, cc, bcc, replyTo } = req.body;
+    const { to, template, data, cc, bcc, replyTo, sync } = req.body;
 
-    if (!to)
+    if (!to) {
       return res.status(400).json({ error: "El campo 'to' es obligatorio" });
-    if (!Array.isArray(to) && !validateEmail(to)) {
-      return res
-        .status(400)
-        .json({ error: "El email destinatario no es válido" });
     }
-    if (!template)
+
+    const recipients = Array.isArray(to) ? to : [to];
+    for (const recipient of recipients) {
+      if (!isValidEmail(recipient)) {
+        return res
+          .status(400)
+          .json({ error: `El email destinatario '${recipient}' no es válido` });
+      }
+    }
+
+    if (!template) {
       return res
         .status(400)
         .json({ error: "El campo 'template' es obligatorio" });
+    }
     if (!VALID_TEMPLATES.includes(template)) {
       return res.status(400).json({
         error: `Template no válido. Disponibles: ${VALID_TEMPLATES.join(", ")}`,
@@ -126,55 +137,91 @@ async function sendTemplatedEmail(req, res, next) {
     }
 
     const templateData = { ...data, frontendUrl: config.frontendUrl };
-    const result = await emailService.sendTemplatedEmail({
+    const emailPayload = {
       to,
       template,
       data: templateData,
       cc,
       bcc,
       replyTo,
-    });
+    };
 
-    res.status(200).json({ success: true, ...result });
+    if (sync === true || req.query.sync === "true") {
+      const result = await emailService.sendTemplatedEmailDirect(emailPayload);
+      return res.status(200).json({ success: true, ...result });
+    }
+
+    const queueResult = await notificationQueue.enqueueEmail(emailPayload);
+    return res.status(202).json({
+      success: true,
+      message: "Email encolado satisfactoriamente para su envío.",
+      template,
+      ...queueResult,
+    });
   } catch (error) {
     next(error);
   }
 }
 
+/**
+ * Envío de email crudo (HTML o Texto).
+ * Restringido a administradores o servicios internos para evitar spam / open relay.
+ */
 async function sendRawEmail(req, res, next) {
   try {
-    const { to, subject, html, text, cc, bcc, replyTo } = req.body;
+    const { to, subject, html, text, cc, bcc, replyTo, sync } = req.body;
 
-    if (!to)
+    if (!to) {
       return res.status(400).json({ error: "El campo 'to' es obligatorio" });
-    if (!Array.isArray(to) && !validateEmail(to)) {
-      return res
-        .status(400)
-        .json({ error: "El email destinatario no es válido" });
     }
-    if (!subject)
+
+    const recipients = Array.isArray(to) ? to : [to];
+    for (const recipient of recipients) {
+      if (!isValidEmail(recipient)) {
+        return res
+          .status(400)
+          .json({ error: `El email destinatario '${recipient}' no es válido` });
+      }
+    }
+
+    if (!subject) {
       return res
         .status(400)
         .json({ error: "El campo 'subject' es obligatorio" });
-    if (!html && !text)
+    }
+    if (!html && !text) {
       return res.status(400).json({ error: "Se requiere 'html' o 'text'" });
+    }
 
-    const result = await emailService.sendEmail({
+    const emailPayload = {
       to,
-      subject,
+      subject: sanitizeString(subject, 300),
       html,
       text,
       cc,
       bcc,
       replyTo,
-    });
+    };
 
-    res.status(200).json({ success: true, ...result });
+    if (sync === true || req.query.sync === "true") {
+      const result = await emailService.sendEmailDirect(emailPayload);
+      return res.status(200).json({ success: true, ...result });
+    }
+
+    const queueResult = await notificationQueue.enqueueEmail(emailPayload);
+    return res.status(202).json({
+      success: true,
+      message: "Email encolado satisfactoriamente para su procesamiento.",
+      ...queueResult,
+    });
   } catch (error) {
     next(error);
   }
 }
 
+/**
+ * Envío de sugerencia a la administración de YouConnext.
+ */
 async function sendSuggestionReceived(req, res, next) {
   try {
     const {
@@ -184,6 +231,7 @@ async function sendSuggestionReceived(req, res, next) {
       userName,
       userEmail,
       suggestionId,
+      sync,
     } = req.body;
 
     if (!config.adminEmail) {
@@ -196,38 +244,38 @@ async function sendSuggestionReceived(req, res, next) {
         error: "ADMIN_SUGGESTIONS_URL no está configurada en el entorno",
       });
     }
-    if (!companyName)
+    if (!companyName) {
       return res
         .status(400)
         .json({ error: "El campo 'companyName' es obligatorio" });
-    if (!companyEmail)
-      return res
-        .status(400)
-        .json({ error: "El campo 'companyEmail' es obligatorio" });
-    if (!validateEmail(companyEmail)) {
-      return res
-        .status(400)
-        .json({ error: "El email de la empresa no es válido" });
     }
-    if (!userName)
+    if (!companyEmail || !isValidEmail(companyEmail)) {
+      return res
+        .status(400)
+        .json({ error: "El email de la empresa no es válido o está ausente" });
+    }
+    if (!userName) {
       return res
         .status(400)
         .json({ error: "El campo 'userName' es obligatorio" });
-    if (!userEmail)
+    }
+    if (!userEmail || !isValidEmail(userEmail)) {
       return res
         .status(400)
-        .json({ error: "El campo 'userEmail' es obligatorio" });
-    if (!suggestionId)
+        .json({ error: "El campo 'userEmail' no es válido o está ausente" });
+    }
+    if (!suggestionId) {
       return res
         .status(400)
         .json({ error: "El campo 'suggestionId' es obligatorio" });
+    }
 
     const finalAdminUrl = `${config.adminSuggestionsUrl.replace(/\/$/, "")}/${suggestionId}`;
     const templateData = {
-      companyName,
+      companyName: sanitizeString(companyName, 200),
       companyEmail,
-      website: website || "",
-      userName,
+      website: website ? sanitizeString(website, 200) : "",
+      userName: sanitizeString(userName, 100),
       userEmail,
       suggestionId,
       adminUrl: finalAdminUrl,
@@ -238,21 +286,36 @@ async function sendSuggestionReceived(req, res, next) {
       frontendUrl: config.frontendUrl,
     };
 
-    const result = await emailService.sendTemplatedEmail({
+    const emailPayload = {
       to: config.adminEmail,
       template: "suggestion_received",
       data: templateData,
-    });
+    };
 
-    res.status(200).json({ success: true, to: config.adminEmail, ...result });
+    if (sync === true || req.query.sync === "true") {
+      const result = await emailService.sendTemplatedEmailDirect(emailPayload);
+      return res.status(200).json({ success: true, to: config.adminEmail, ...result });
+    }
+
+    const queueResult = await notificationQueue.enqueueEmail(emailPayload);
+    return res.status(202).json({
+      success: true,
+      message: "Notificación de sugerencia encolada para el administrador.",
+      to: config.adminEmail,
+      ...queueResult,
+    });
   } catch (error) {
     next(error);
   }
 }
 
+/**
+ * Envío de emails por lote (Batch).
+ * Requiere rol administrador exclusivo o servicio interno (BFLA/Spam mitigation).
+ */
 async function sendBatchEmails(req, res, next) {
   try {
-    const { emails } = req.body;
+    const { emails, sync } = req.body;
 
     if (!Array.isArray(emails) || emails.length === 0) {
       return res.status(400).json({
@@ -261,10 +324,10 @@ async function sendBatchEmails(req, res, next) {
     }
 
     for (const [i, email] of emails.entries()) {
-      if (!email.to) {
+      if (!email.to || !isValidEmail(email.to)) {
         return res
           .status(400)
-          .json({ error: `Email en índice ${i}: 'to' es obligatorio` });
+          .json({ error: `Email en índice ${i}: 'to' es inválido o falta` });
       }
       if (!email.subject) {
         return res
@@ -278,16 +341,30 @@ async function sendBatchEmails(req, res, next) {
       }
     }
 
-    const results = await emailService.sendBatchEmails(emails);
-    const succeeded = results.filter((r) => r.success).length;
-    const failed = results.filter((r) => !r.success).length;
+    if (sync === true || req.query.sync === "true") {
+      const results = await emailService.sendBatchEmailsDirect(emails);
+      const succeeded = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success).length;
 
-    res.status(200).json({
+      return res.status(200).json({
+        success: true,
+        total: results.length,
+        succeeded,
+        failed,
+        results,
+      });
+    }
+
+    const queueResult = await notificationQueue.enqueueEmail({
+      batch: true,
+      emails,
+    });
+
+    return res.status(202).json({
       success: true,
-      total: results.length,
-      succeeded,
-      failed,
-      results,
+      message: "Lote de correos encolado satisfactoriamente.",
+      totalEmails: emails.length,
+      ...queueResult,
     });
   } catch (error) {
     next(error);

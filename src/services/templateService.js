@@ -40,6 +40,10 @@ const TEMPLATES = {
     subject: "Nueva reserva en tu viaje - YouConnext",
     file: "trip-booked.html",
   },
+  enterprise_invitation: {
+    subject: "Invitación para unirte a {{enterpriseName}} en YouConnext",
+    file: "enterprise-invitation.html",
+  },
 };
 
 function loadTemplateFile(filename) {

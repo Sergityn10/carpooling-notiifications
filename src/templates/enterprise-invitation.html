@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Invitación para unirte a {{enterpriseName}}</title>
+  </head>
+  <body
+    style="
+      margin: 0;
+      padding: 0;
+      background-color: #f4f7fa;
+      font-family: Arial, Helvetica, sans-serif;
+    "
+  >
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding: 40px 0">
+      <tr>
+        <td align="center">
+          <table
+            width="600"
+            cellpadding="0"
+            cellspacing="0"
+            style="
+              background-color: #ffffff;
+              border-radius: 12px;
+              overflow: hidden;
+              box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            "
+          >
+            <!-- Cabecera Corporativa -->
+            <tr>
+              <td
+                style="
+                  background-color: #2563eb;
+                  padding: 30px 40px;
+                  text-align: center;
+                "
+              >
+                <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 700; letter-spacing: 0.5px;">
+                  YouConnext
+                </h1>
+                <p style="color: #e0e7ff; margin: 5px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">
+                  Movilidad Corporativa Sostenible
+                </p>
+              </td>
+            </tr>
+
+            <!-- Contenido Principal -->
+            <tr>
+              <td style="padding: 40px">
+                <h2 style="color: #1e293b; margin: 0 0 16px; font-size: 22px;">
+                  ¡Has sido invitado a unirte a {{enterpriseName}}! 🏢
+                </h2>
+                <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 24px;">
+                  La organización <strong>{{enterpriseName}}</strong> te ha invitado a formar parte de su comunidad exclusiva de carpooling y movilidad colaborativa en YouConnext.
+                </p>
+
+                <!-- Tarjeta de Detalles de la Invitación -->
+                <table
+                  width="100%"
+                  cellpadding="0"
+                  cellspacing="0"
+                  style="
+                    margin: 20px 0;
+                    background-color: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    overflow: hidden;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 12px 20px; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0; width: 35%;">
+                      Organización
+                    </td>
+                    <td style="padding: 12px 20px; color: #1e293b; font-size: 15px; font-weight: 600; border-bottom: 1px solid #e2e8f0;">
+                      {{enterpriseName}}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 20px; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">
+                      Puesto / Rol
+                    </td>
+                    <td style="padding: 12px 20px; color: #2563eb; font-size: 15px; font-weight: 600; border-bottom: 1px solid #e2e8f0;">
+                      {{roleTitle}}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 20px; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">
+                      Departamento
+                    </td>
+                    <td style="padding: 12px 20px; color: #1e293b; font-size: 15px; border-bottom: 1px solid #e2e8f0;">
+                      {{department}}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px 20px; color: #64748b; font-size: 14px;">
+                      Caducidad del enlace
+                    </td>
+                    <td style="padding: 12px 20px; color: #64748b; font-size: 14px;">
+                      {{expiresAt}}
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 20px 0;">
+                  Al unirte, podrás acceder a las rutas de carpooling exclusivas de tu empresa, conectar con compañeros de trabajo, coordinar eventos y computar tus ahorros de emisiones de CO2.
+                </p>
+
+                <!-- Botón CTA de Aceptación -->
+                <table width="100%" cellpadding="0" cellspacing="0" style="margin: 32px 0 24px;">
+                  <tr>
+                    <td align="center">
+                      <a
+                        href="{{invitationLink}}"
+                        style="
+                          display: inline-block;
+                          background-color: #2563eb;
+                          color: #ffffff;
+                          text-decoration: none;
+                          font-size: 16px;
+                          font-weight: 600;
+                          padding: 14px 32px;
+                          border-radius: 8px;
+                          box-shadow: 0 4px 6px rgba(37, 99, 235, 0.25);
+                        "
+                      >
+                        Aceptar Invitación
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="color: #94a3b8; font-size: 13px; line-height: 1.5; margin: 0 0 16px; text-align: center;">
+                  Si el botón no funciona, copia y pega este enlace en tu navegador:<br />
+                  <a href="{{invitationLink}}" style="color: #2563eb; word-break: break-all;">{{invitationLink}}</a>
+                </p>
+
+                <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0 20px;" />
+
+                <p style="color: #94a3b8; font-size: 12px; line-height: 1.5; margin: 0;">
+                  Si no esperabas recibir esta invitación, puedes ignorar este correo electrónico de forma segura. Tu cuenta personal de YouConnext no sufrirá ninguna modificación.
+                </p>
+              </td>
+            </tr>
+
+            <!-- Pie de Página -->
+            <tr>
+              <td
+                style="
+                  background-color: #f8fafc;
+                  padding: 20px 40px;
+                  text-align: center;
+                  border-top: 1px solid #e2e8f0;
+                "
+              >
+                <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+                  YouConnext Mobility &bull; Impulsando el carpooling sostenible corporativo
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

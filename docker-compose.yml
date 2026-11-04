@@ -38,6 +38,7 @@ services:
       - .env
     environment:
       DATABASE_URL: mysql://carpooling_notifications_user:carpooling_notifications_password@mysql:3306/carpooling_notifications
+      RABBITMQ_URL: amqp://carpooling:carpooling123@host.docker.internal:5672
     depends_on:
       mysql:
         condition: service_healthy

@@ -16,12 +16,19 @@ function getTransporter() {
       user: config.smtp.user,
       pass: config.smtp.pass,
     },
+    // Opciones de pool y timeouts para robustez
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 
   return transporter;
 }
 
-async function sendEmail({ to, subject, html, text, cc, bcc, replyTo }) {
+async function sendEmailDirect({ to, subject, html, text, cc, bcc, replyTo }) {
   const transport = getTransporter();
 
   const mailOptions = {
@@ -45,22 +52,30 @@ async function sendEmail({ to, subject, html, text, cc, bcc, replyTo }) {
   };
 }
 
-async function sendTemplatedEmail({ to, template, data, cc, bcc, replyTo }) {
+async function sendTemplatedEmailDirect({ to, template, data, cc, bcc, replyTo }) {
   const { subject, html, text } = renderTemplate(template, data);
-
-  return sendEmail({ to, subject, html, text, cc, bcc, replyTo });
+  return sendEmailDirect({ to, subject, html, text, cc, bcc, replyTo });
 }
 
-async function sendBatchEmails(emails) {
-  const results = [];
+async function sendBatchEmailsDirect(emails) {
+  if (!Array.isArray(emails) || emails.length === 0) return [];
 
-  for (const email of emails) {
-    try {
-      const result = await sendEmail(email);
-      results.push({ to: email.to, success: true, ...result });
-    } catch (error) {
-      results.push({ to: email.to, success: false, error: error.message });
-    }
+  const results = [];
+  const BATCH_CONCURRENCY = 5;
+
+  for (let i = 0; i < emails.length; i += BATCH_CONCURRENCY) {
+    const chunk = emails.slice(i, i + BATCH_CONCURRENCY);
+    const chunkPromises = chunk.map(async (email) => {
+      try {
+        const result = await sendEmailDirect(email);
+        return { to: email.to, success: true, ...result };
+      } catch (error) {
+        return { to: email.to, success: false, error: error.message };
+      }
+    });
+
+    const chunkResults = await Promise.all(chunkPromises);
+    results.push(...chunkResults);
   }
 
   return results;
@@ -72,8 +87,11 @@ async function verifyConnection() {
 }
 
 module.exports = {
-  sendEmail,
-  sendTemplatedEmail,
-  sendBatchEmails,
+  sendEmail: sendEmailDirect,
+  sendTemplatedEmail: sendTemplatedEmailDirect,
+  sendBatchEmails: sendBatchEmailsDirect,
+  sendEmailDirect,
+  sendTemplatedEmailDirect,
+  sendBatchEmailsDirect,
   verifyConnection,
 };

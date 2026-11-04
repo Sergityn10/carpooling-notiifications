@@ -2,6 +2,7 @@ const amqp = require("amqplib");
 const config = require("../config");
 const userEventHandler = require("../handlers/userEventHandler");
 const suggestionEventHandler = require("../handlers/suggestionEventHandler");
+const enterpriseEventHandler = require("../handlers/enterpriseEventHandler");
 
 const EXCHANGE = "carpooling_events";
 const EXCHANGE_TYPE = "topic";
@@ -12,6 +13,9 @@ const ROUTING_KEY_USER = "user.*";
 const QUEUE_SUGGESTION = "notifications.suggestion.events";
 const ROUTING_KEY_SUGGESTION = "suggestion.*";
 
+const QUEUE_ENTERPRISE = "notifications.enterprise.events";
+const ROUTING_KEY_ENTERPRISE = "enterprise.*";
+
 let connection = null;
 let channel = null;
 let reconnectTimer = null;
@@ -20,6 +24,7 @@ let isShuttingDown = false;
 const ROUTING_KEY_HANDLERS = {
   "user.*": userEventHandler,
   "suggestion.*": suggestionEventHandler,
+  "enterprise.*": enterpriseEventHandler,
 };
 
 async function startConsumer() {
@@ -66,6 +71,15 @@ async function startConsumer() {
       ROUTING_KEY_SUGGESTION,
     );
 
+    const enterpriseQueue = await channel.assertQueue(QUEUE_ENTERPRISE, {
+      durable: true,
+    });
+    await channel.bindQueue(
+      enterpriseQueue.queue,
+      EXCHANGE,
+      ROUTING_KEY_ENTERPRISE,
+    );
+
     channel.prefetch(1);
 
     console.log(
@@ -73,6 +87,9 @@ async function startConsumer() {
     );
     console.log(
       `[RabbitMQ] Escuchando "${ROUTING_KEY_SUGGESTION}" en "${QUEUE_SUGGESTION}"`,
+    );
+    console.log(
+      `[RabbitMQ] Escuchando "${ROUTING_KEY_ENTERPRISE}" en "${QUEUE_ENTERPRISE}"`,
     );
 
     channel.consume(
@@ -84,6 +101,12 @@ async function startConsumer() {
     channel.consume(
       suggestionQueue.queue,
       (msg) => processMessage(msg, channel, "suggestion.*"),
+      { noAck: false },
+    );
+
+    channel.consume(
+      enterpriseQueue.queue,
+      (msg) => processMessage(msg, channel, "enterprise.*"),
       { noAck: false },
     );
   } catch (error) {
@@ -102,11 +125,12 @@ async function processMessage(msg, ch, routingPattern) {
     console.log(`[RabbitMQ] Evento recibido: ${routingKey}`, content);
 
     const handler = ROUTING_KEY_HANDLERS[routingPattern];
+    const eventData = content.data !== undefined ? content.data : content;
 
-    if (handler && content.data) {
-      await handler.handle(routingKey, content.data);
+    if (handler && eventData) {
+      await handler.handle(routingKey, eventData);
     } else {
-      console.warn(`[RabbitMQ] No hay handler para routing key: ${routingKey}`);
+      console.warn(`[RabbitMQ] No hay handler o datos para routing key: ${routingKey}`);
     }
 
     ch.ack(msg);
@@ -145,4 +169,11 @@ async function stopConsumer() {
   console.log("[RabbitMQ] Consumidor detenido");
 }
 
-module.exports = { startConsumer, stopConsumer };
+module.exports = {
+  startConsumer,
+  stopConsumer,
+  processMessage,
+  ROUTING_KEY_HANDLERS,
+  QUEUE_ENTERPRISE,
+  ROUTING_KEY_ENTERPRISE,
+};

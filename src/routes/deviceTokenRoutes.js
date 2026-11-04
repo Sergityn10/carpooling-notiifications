@@ -1,12 +1,24 @@
 const express = require("express");
 const router = express.Router();
-const { requireAuth, requireAdmin } = require("../middleware/authMiddleware");
 const deviceTokenController = require("../controllers/deviceTokenController");
+const {
+  requireAuth,
+  requireAdmin,
+  requireOwnership,
+  notificationBurstLimiter,
+} = require("../security");
 
-router.post("/", requireAuth, deviceTokenController.registerDeviceToken);
+// Registro y consulta de dispositivos propios
+router.post(
+  "/",
+  notificationBurstLimiter,
+  requireAuth,
+  deviceTokenController.registerDeviceToken,
+);
 
 router.get("/me", requireAuth, deviceTokenController.listMyDeviceTokens);
 
+// Supervisión de administradores (BFLA mitigado)
 router.get(
   "/admin/all",
   requireAuth,
@@ -14,13 +26,20 @@ router.get(
   deviceTokenController.listAllDeviceTokens,
 );
 
+// Consulta por userId con control ABAC / Ownership (el usuario puede ver los suyos, admin cualquiera)
 router.get(
   "/admin/user/:userId",
   requireAuth,
-  requireAdmin,
+  requireOwnership((req) => req.params.userId),
   deviceTokenController.listUserDeviceTokensAdmin,
 );
 
-router.delete("/", requireAuth, deviceTokenController.deactivateDeviceToken);
+// Desactivación de dispositivo
+router.delete(
+  "/",
+  notificationBurstLimiter,
+  requireAuth,
+  deviceTokenController.deactivateDeviceToken,
+);
 
 module.exports = router;
