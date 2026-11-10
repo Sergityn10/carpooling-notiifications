@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const config = require("../config");
 
@@ -53,6 +54,28 @@ function extractServiceApiKey(req) {
 }
 
 /**
+ * Compara en tiempo constante la API Key de servicio interno contra la configurada.
+ */
+function isValidServiceApiKey(req) {
+  const serviceApiKey = extractServiceApiKey(req);
+  const configuredServiceKey =
+    process.env.INTERNAL_SERVICE_API_KEY ||
+    process.env.SERVICE_API_KEY ||
+    config.serviceApiKey;
+
+  if (!configuredServiceKey || !serviceApiKey || typeof serviceApiKey !== "string") {
+    return false;
+  }
+
+  const expectedBuf = Buffer.from(configuredServiceKey, "utf8");
+  const receivedBuf = Buffer.from(serviceApiKey, "utf8");
+  if (expectedBuf.length !== receivedBuf.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(expectedBuf, receivedBuf);
+}
+
+/**
  * Valida de forma estricta un token JWT utilizando exclusivamente RS256.
  * CRIT-01 & CRIT-02: Rechaza tokens sin firma, con algoritmo none o firma inválida.
  *
@@ -97,17 +120,7 @@ function validateClaims(payload) {
 function requireAuth(req, res, next) {
   try {
     // 1. Verificación de clave de servicio interna para llamadas entre microservicios
-    const serviceApiKey = extractServiceApiKey(req);
-    const configuredServiceKey =
-      process.env.INTERNAL_SERVICE_API_KEY ||
-      process.env.SERVICE_API_KEY ||
-      config.serviceApiKey;
-
-    if (
-      configuredServiceKey &&
-      serviceApiKey &&
-      serviceApiKey === configuredServiceKey
-    ) {
+    if (isValidServiceApiKey(req)) {
       req.user = {
         id: "internal-service",
         userId: "internal-service",
@@ -262,6 +275,7 @@ function requireOwnership(getOwnerIdFromRequest) {
 module.exports = {
   ALLOWED_ALGORITHMS,
   extractBearerToken,
+  isValidServiceApiKey,
   verifyStrictToken,
   requireAuth,
   requireRole,

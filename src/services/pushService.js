@@ -2,6 +2,12 @@ const { initializeApp, cert, getApps } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
 const config = require("../config");
 const deviceTokenService = require("./deviceTokenService");
+const { chunkArray, deduplicateIds } = require("../utils/templateInterpolator");
+
+const INVALID_FCM_ERROR_CODES = new Set([
+  "messaging/invalid-registration-token",
+  "messaging/registration-token-not-registered",
+]);
 
 function initFirebase() {
   if (
@@ -43,13 +49,10 @@ function normalizeDataPayload(data = {}) {
 }
 
 /**
- * Envío directo a un único token FCM.
+ * Construye las propiedades comunes de un mensaje FCM (directo y multicast).
  */
-async function sendToTokenDirect(token, payload) {
-  const messaging = initFirebase();
-
-  const message = {
-    token,
+function buildBaseMessage(payload) {
+  return {
     notification: {
       title: payload.title,
       body: payload.body,
@@ -71,16 +74,23 @@ async function sendToTokenDirect(token, payload) {
       },
     },
   };
+}
+
+/**
+ * Envío directo a un único token FCM.
+ */
+async function sendToTokenDirect(token, payload) {
+  const messaging = initFirebase();
+  const message = {
+    token,
+    ...buildBaseMessage(payload),
+  };
 
   try {
     const messageId = await messaging.send(message);
     return { success: true, messageId };
   } catch (error) {
-    // Si el token es inválido o expiró en el dispositivo móvil, desactivarlo
-    if (
-      error.code === "messaging/invalid-registration-token" ||
-      error.code === "messaging/registration-token-not-registered"
-    ) {
+    if (INVALID_FCM_ERROR_CODES.has(error.code)) {
       console.warn(`[PushService] Desactivando token FCM obsoleto: ${token}`);
       deviceTokenService.deactivateDeviceToken(null, token).catch(() => {});
     }
@@ -90,46 +100,28 @@ async function sendToTokenDirect(token, payload) {
 
 /**
  * Envío optimizado a múltiples tokens mediante sendEachForMulticast (en lotes de 500).
- * Elimina el cuello de botella de bucles secuenciales O(N) de llamadas HTTP.
+ * Deduplica tokens y desactiva tokens obsoletos en una sola operación bulk por chunk.
  */
 async function sendToTokensDirect(tokens, payload) {
-  if (!Array.isArray(tokens) || tokens.length === 0) {
+  const uniqueTokens = deduplicateIds(tokens);
+  if (uniqueTokens.length === 0) {
     return [];
   }
 
   const messaging = initFirebase();
   const allResults = [];
+  const baseMessage = buildBaseMessage(payload);
   const CHUNK_SIZE = 500;
 
-  for (let i = 0; i < tokens.length; i += CHUNK_SIZE) {
-    const chunkTokens = tokens.slice(i, i + CHUNK_SIZE);
-
+  for (const chunkTokens of chunkArray(uniqueTokens, CHUNK_SIZE)) {
     const multicastMessage = {
       tokens: chunkTokens,
-      notification: {
-        title: payload.title,
-        body: payload.body,
-      },
-      data: normalizeDataPayload(payload.data),
-      android: {
-        priority: payload.priority === "high" ? "high" : "normal",
-        notification: {
-          channelId: payload.channelId || "default",
-          sound: "default",
-        },
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-            badge: typeof payload.badge === "number" ? payload.badge : 1,
-          },
-        },
-      },
+      ...baseMessage,
     };
 
     try {
       const response = await messaging.sendEachForMulticast(multicastMessage);
+      const invalidTokens = [];
 
       response.responses.forEach((resp, index) => {
         const token = chunkTokens[index];
@@ -141,19 +133,21 @@ async function sendToTokensDirect(tokens, payload) {
           });
         } else {
           const errCode = resp.error?.code;
-          if (
-            errCode === "messaging/invalid-registration-token" ||
-            errCode === "messaging/registration-token-not-registered"
-          ) {
-            deviceTokenService.deactivateDeviceToken(null, token).catch(() => {});
+          if (INVALID_FCM_ERROR_CODES.has(errCode)) {
+            invalidTokens.push(token);
           }
           allResults.push({
             token,
             success: false,
+            errorCode: errCode,
             error: resp.error?.message || "Error desconocido FCM",
           });
         }
       });
+
+      if (invalidTokens.length > 0) {
+        deviceTokenService.deactivateTokensBulk(invalidTokens).catch(() => {});
+      }
     } catch (batchError) {
       chunkTokens.forEach((token) => {
         allResults.push({
@@ -223,4 +217,5 @@ module.exports = {
   sendToTopicDirect,
   subscribeToTopic,
   unsubscribeFromTopic,
+  INVALID_FCM_ERROR_CODES,
 };

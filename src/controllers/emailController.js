@@ -1,100 +1,17 @@
+const { v4: uuidv4 } = require("uuid");
 const emailService = require("../services/emailService");
 const templateService = require("../services/templateService");
 const notificationQueue = require("../services/notificationQueue");
+const emailChannel = require("../services/channels/emailChannel");
+const {
+  getNotificationType,
+  validateCatalogFields,
+} = require("../templates/notificationCatalog");
 const config = require("../config");
 const { isValidEmail, sanitizeString } = require("../security");
 
-const VALID_TEMPLATES = [
-  "welcome",
-  "trip_confirmation",
-  "trip_cancelled",
-  "booking_request",
-  "password_reset",
-  "suggestion_received",
-  "trip_completed",
-  "trip_started",
-  "trip_booked",
-  "enterprise_invitation",
-];
-
-const TEMPLATE_REQUIRED_FIELDS = {
-  welcome: ["name"],
-  trip_confirmation: [
-    "userName",
-    "origin",
-    "destination",
-    "date",
-    "time",
-    "seats",
-    "price",
-    "tripId",
-  ],
-  trip_cancelled: [
-    "userName",
-    "origin",
-    "destination",
-    "date",
-    "time",
-    "reason",
-  ],
-  booking_request: [
-    "driverName",
-    "passengerName",
-    "origin",
-    "destination",
-    "date",
-    "time",
-    "seatsRequested",
-    "tripId",
-  ],
-  password_reset: ["name", "resetUrl"],
-  suggestion_received: [
-    "companyName",
-    "companyEmail",
-    "userName",
-    "userEmail",
-    "adminUrl",
-  ],
-  trip_completed: [
-    "userName",
-    "origin",
-    "destination",
-    "date",
-    "time",
-    "passengers",
-    "earnings",
-    "tripId",
-  ],
-  trip_started: [
-    "userName",
-    "origin",
-    "destination",
-    "date",
-    "time",
-    "passengers",
-    "tripId",
-  ],
-  trip_booked: [
-    "userName",
-    "passengerName",
-    "origin",
-    "destination",
-    "date",
-    "time",
-    "seatsBooked",
-    "seatsRemaining",
-    "tripId",
-  ],
-  enterprise_invitation: ["enterpriseName", "roleTitle", "invitationLink"],
-};
-
 function validateTemplateFields(template, data) {
-  const required = TEMPLATE_REQUIRED_FIELDS[template] || [];
-  const missing = required.filter(
-    (field) =>
-      data[field] === undefined || data[field] === null || data[field] === "",
-  );
-  return missing;
+  return validateCatalogFields(template, data);
 }
 
 /**
@@ -123,24 +40,31 @@ async function sendTemplatedEmail(req, res, next) {
         .status(400)
         .json({ error: "El campo 'template' es obligatorio" });
     }
-    if (!VALID_TEMPLATES.includes(template)) {
+    if (!templateService.hasTemplate(template)) {
+      const available = Object.keys(templateService.TEMPLATES).join(", ");
       return res.status(400).json({
-        error: `Template no válido. Disponibles: ${VALID_TEMPLATES.join(", ")}`,
+        error: `Template no válido. Disponibles: ${available}`,
       });
     }
 
-    const missing = validateTemplateFields(template, data || {});
+    const catalogDef = getNotificationType(template);
+    const mergedData = {
+      ...(catalogDef?.defaults || {}),
+      ...(data || {}),
+      frontendUrl: config.frontendUrl,
+    };
+
+    const missing = validateTemplateFields(template, mergedData);
     if (missing.length > 0) {
       return res.status(400).json({
         error: `Faltan campos obligatorios para el template: ${missing.join(", ")}`,
       });
     }
 
-    const templateData = { ...data, frontendUrl: config.frontendUrl };
     const emailPayload = {
       to,
       template,
-      data: templateData,
+      data: mergedData,
       cc,
       bcc,
       replyTo,
@@ -294,7 +218,9 @@ async function sendSuggestionReceived(req, res, next) {
 
     if (sync === true || req.query.sync === "true") {
       const result = await emailService.sendTemplatedEmailDirect(emailPayload);
-      return res.status(200).json({ success: true, to: config.adminEmail, ...result });
+      return res
+        .status(200)
+        .json({ success: true, to: config.adminEmail, ...result });
     }
 
     const queueResult = await notificationQueue.enqueueEmail(emailPayload);
@@ -310,8 +236,8 @@ async function sendSuggestionReceived(req, res, next) {
 }
 
 /**
- * Envío de emails por lote (Batch).
- * Requiere rol administrador exclusivo o servicio interno (BFLA/Spam mitigation).
+ * Envío de emails por lote (Batch raw).
+ * En modo asíncrono realiza fan-out a jobs individuales para evitar timeouts y fallos monolíticos.
  */
 async function sendBatchEmails(req, res, next) {
   try {
@@ -320,6 +246,13 @@ async function sendBatchEmails(req, res, next) {
     if (!Array.isArray(emails) || emails.length === 0) {
       return res.status(400).json({
         error: "Se requiere un array 'emails' con al menos un elemento",
+      });
+    }
+
+    const maxRecipients = config.batch.maxRecipients || 5000;
+    if (emails.length > maxRecipients) {
+      return res.status(400).json({
+        error: `El lote excede el máximo permitido (${maxRecipients} emails)`,
       });
     }
 
@@ -355,23 +288,109 @@ async function sendBatchEmails(req, res, next) {
       });
     }
 
-    const queueResult = await notificationQueue.enqueueEmail({
-      batch: true,
-      emails,
-    });
+    const batchId = uuidv4();
+    const payloads = emails.map((email) => ({
+      batchId,
+      to: email.to.trim(),
+      subject: sanitizeString(email.subject, 300),
+      html: email.html,
+      text: email.text,
+      cc: email.cc,
+      bcc: email.bcc,
+      replyTo: email.replyTo,
+    }));
+
+    const queuedJobs = await emailChannel.enqueueSingleEmailJobs(payloads);
 
     return res.status(202).json({
       success: true,
-      message: "Lote de correos encolado satisfactoriamente.",
+      message: "Lote de correos encolado mediante fan-out individual.",
+      batchId,
       totalEmails: emails.length,
-      ...queueResult,
+      jobsQueued: queuedJobs.length,
+      queueType: queuedJobs[0]?.queueType || "rabbitmq",
     });
   } catch (error) {
     next(error);
   }
 }
 
-async function verifyConnection(req, res, next) {
+/**
+ * Envío masivo de emails por plantilla a partir de userIds (resolución vía ms-usuarios) o recipients.
+ * POST /api/emails/send/batch/template
+ */
+async function sendBatchTemplatedEmails(req, res, next) {
+  try {
+    const {
+      template,
+      sharedData = {},
+      userIds = [],
+      recipients = [],
+      priority = "normal",
+    } = req.body;
+
+    if (!template || !templateService.hasTemplate(template)) {
+      const available = Object.keys(templateService.TEMPLATES).join(", ");
+      return res.status(400).json({
+        error: `Template no válido o ausente. Disponibles: ${available}`,
+      });
+    }
+
+    const catalogDef = getNotificationType(template);
+    const mergedData = {
+      ...(catalogDef?.defaults || {}),
+      ...(sharedData || {}),
+      frontendUrl: sharedData?.frontendUrl || config.frontendUrl || "",
+    };
+
+    const missing = validateTemplateFields(template, mergedData);
+    if (missing.length > 0) {
+      return res.status(400).json({
+        error: `Faltan campos obligatorios para el template: ${missing.join(", ")}`,
+      });
+    }
+
+    const totalCount =
+      (Array.isArray(userIds) ? userIds.length : 0) +
+      (Array.isArray(recipients) ? recipients.length : 0);
+
+    if (totalCount === 0) {
+      return res.status(400).json({
+        error: "Se requiere al menos un elemento en 'userIds' o 'recipients'",
+      });
+    }
+
+    const maxRecipients = config.batch.maxRecipients || 5000;
+    if (totalCount > maxRecipients) {
+      return res.status(400).json({
+        error: `El lote excede el máximo permitido (${maxRecipients} destinatarios)`,
+      });
+    }
+
+    const batchId = uuidv4();
+    const channelResult = await emailChannel.enqueueBatch({
+      batchId,
+      type: template,
+      template,
+      sharedData: mergedData,
+      userIds: Array.isArray(userIds) ? userIds : [],
+      recipients: Array.isArray(recipients) ? recipients : [],
+      priority,
+    });
+
+    return res.status(202).json({
+      success: true,
+      message: "Lote de correos con plantilla encolado satisfactoriamente.",
+      batchId,
+      template,
+      ...channelResult,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function verifyConnection(req, res) {
   try {
     await emailService.verifyConnection();
     res.status(200).json({
@@ -396,6 +415,7 @@ module.exports = {
   sendTemplatedEmail,
   sendRawEmail,
   sendBatchEmails,
+  sendBatchTemplatedEmails,
   sendSuggestionReceived,
   verifyConnection,
   listTemplates,

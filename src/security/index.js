@@ -15,6 +15,7 @@ module.exports = {
   // Autenticación JWT y Autorización RBAC / ABAC (CRIT-01, CRIT-02, HIGH-06, HIGH-07)
   ALLOWED_ALGORITHMS: jwtAuth.ALLOWED_ALGORITHMS,
   extractBearerToken: jwtAuth.extractBearerToken,
+  isValidServiceApiKey: jwtAuth.isValidServiceApiKey,
   verifyStrictToken: jwtAuth.verifyStrictToken,
   requireAuth: jwtAuth.requireAuth,
   requireRole: jwtAuth.requireRole,

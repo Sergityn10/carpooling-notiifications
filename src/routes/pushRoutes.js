@@ -30,6 +30,15 @@ router.post(
   pushController.sendTemplatedToUser,
 );
 
+// Envío masivo por lista de userIds (ms-trayectos / servicios internos / admin)
+router.post(
+  "/send/users",
+  requireAuth,
+  requireAdmin,
+  bulkNotificationLimiter,
+  pushController.sendToUsersBatch,
+);
+
 // Notificaciones masivas o por topics: requieren rol admin exclusivo (BFLA) + rate limiter masivo
 router.post(
   "/send/multicast",

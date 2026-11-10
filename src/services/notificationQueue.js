@@ -2,6 +2,18 @@ const { v4: uuidv4 } = require("uuid");
 const amqp = require("amqplib");
 const config = require("../config");
 const CircuitBreaker = require("../security/circuitBreaker");
+const { chunkArray } = require("../utils/templateInterpolator");
+const {
+  EXCHANGES,
+  EXCHANGE_TYPES,
+  QUEUES,
+  ROUTING_KEYS,
+  RETRY_POLICY,
+  getRetryQueueName,
+  OUTBOUND_EVENTS,
+  JOB_KINDS,
+  NOTIFICATION_PRIORITIES,
+} = require("../constants");
 
 // Circuit breakers para dependencias externas (CRIT-03)
 const fcmCircuitBreaker = new CircuitBreaker("FirebaseFCM", {
@@ -17,11 +29,12 @@ const smtpCircuitBreaker = new CircuitBreaker("ZohoSMTP", {
 });
 
 // Configuración de RabbitMQ
-const EXCHANGE_NOTIFICATIONS = "carpooling_notifications";
-const PUSH_QUEUE = "notifications.push.jobs";
-const EMAIL_QUEUE = "notifications.email.jobs";
-const DLQ_EXCHANGE = "carpooling_notifications_dlq";
-const DLQ_QUEUE = "notifications.dead_letter";
+const EXCHANGE_NOTIFICATIONS = EXCHANGES.NOTIFICATIONS;
+const PUSH_QUEUE = QUEUES.DELIVERY.PUSH;
+const EMAIL_QUEUE = QUEUES.DELIVERY.EMAIL;
+const DLQ_EXCHANGE = EXCHANGES.DLQ;
+const DLQ_QUEUE = QUEUES.DLQ;
+const RETRY_STEPS = RETRY_POLICY.STEPS;
 
 // Estado de conexión RabbitMQ
 let rmqConnection = null;
@@ -32,18 +45,61 @@ let isRmqConnected = false;
 const MAX_IN_MEMORY_QUEUE_SIZE = 5000;
 const memoryPushQueue = [];
 const memoryEmailQueue = [];
+const pendingRetryTimers = new Set();
 let isProcessingMemoryQueue = false;
 
 // Concurrencia máxima para consumo local (previene saturación de event loop y sockets)
-const MAX_CONCURRENT_PUSH = 5;
-const MAX_CONCURRENT_EMAIL = 3;
+const MAX_CONCURRENT_PUSH = config.batch?.maxConcurrentPush || 5;
+const MAX_CONCURRENT_EMAIL = config.batch?.maxConcurrentEmail || 3;
 let activePushTasks = 0;
 let activeEmailTasks = 0;
 
+function isPermanentError(err) {
+  if (!err) return false;
+  if (err.isPermanent === true) return true;
+  if (
+    err.code === "INVALID_PAYLOAD" ||
+    err.code === "USER_SERVICE_NOT_CONFIGURED" ||
+    err.code === "EENVELOPE"
+  ) {
+    return true;
+  }
+  const code = Number(err.responseCode);
+  if ([550, 551, 552, 553].includes(code)) {
+    return true;
+  }
+  return false;
+}
+
+async function assertChannelQueues(channel, { queueName, bindPattern, channelType, retryRoutingKey }) {
+  await channel.assertQueue(queueName, {
+    durable: true,
+    arguments: {
+      "x-dead-letter-exchange": DLQ_EXCHANGE,
+      "x-dead-letter-routing-key": ROUTING_KEYS.DLQ,
+      "x-max-priority": 10,
+    },
+  });
+  await channel.bindQueue(queueName, EXCHANGE_NOTIFICATIONS, bindPattern);
+
+  for (const step of RETRY_STEPS) {
+    await channel.assertQueue(`notifications.${channelType}.retry.${step.suffix}`, {
+      durable: true,
+      arguments: {
+        "x-message-ttl": step.ttlMs,
+        "x-dead-letter-exchange": EXCHANGE_NOTIFICATIONS,
+        "x-dead-letter-routing-key": retryRoutingKey,
+      },
+    });
+  }
+}
+
 /**
- * Inicializa RabbitMQ y sus colas duraderas si está disponible.
+ * Inicializa RabbitMQ y sus colas duraderas (con retry TTL y DLQ) si está disponible.
+ * @param {object} [options]
+ * @param {boolean} [options.startConsumers=true] - Si false, solo inicializa capacidad de publicación (modo API ingress)
  */
-async function initRabbitMQ() {
+async function initRabbitMQ({ startConsumers = true } = {}) {
   if (!config.rabbitmqUrl) {
     console.warn(
       "[NotificationQueue] RABBITMQ_URL no configurada. Operando con cola resiliente en memoria.",
@@ -64,79 +120,92 @@ async function initRabbitMQ() {
 
     rmqChannel = await rmqConnection.createChannel();
 
-    // Dead Letter Exchange y Cola para mensajes fallidos tras reintentos
-    await rmqChannel.assertExchange(DLQ_EXCHANGE, "direct", { durable: true });
+    await rmqChannel.assertExchange(DLQ_EXCHANGE, EXCHANGE_TYPES.DIRECT, { durable: true });
     await rmqChannel.assertQueue(DLQ_QUEUE, { durable: true });
-    await rmqChannel.bindQueue(DLQ_QUEUE, DLQ_EXCHANGE, "dead_letter");
+    await rmqChannel.bindQueue(DLQ_QUEUE, DLQ_EXCHANGE, ROUTING_KEYS.DLQ);
 
-    // Exchange principal de notificaciones
-    await rmqChannel.assertExchange(EXCHANGE_NOTIFICATIONS, "topic", {
+    await rmqChannel.assertExchange(EXCHANGE_NOTIFICATIONS, EXCHANGE_TYPES.TOPIC, {
       durable: true,
     });
 
-    // Cola de Push Notifications con Dead Letter habilitado
-    await rmqChannel.assertQueue(PUSH_QUEUE, {
-      durable: true,
-      arguments: {
-        "x-dead-letter-exchange": DLQ_EXCHANGE,
-        "x-dead-letter-routing-key": "dead_letter",
-        "x-max-priority": 10,
-      },
+    await assertChannelQueues(rmqChannel, {
+      queueName: PUSH_QUEUE,
+      bindPattern: ROUTING_KEYS.DELIVERY_PATTERNS.PUSH,
+      channelType: "push",
+      retryRoutingKey: OUTBOUND_EVENTS.INTERNAL_JOBS.PUSH_RETRY,
     });
-    await rmqChannel.bindQueue(PUSH_QUEUE, EXCHANGE_NOTIFICATIONS, "push.#");
 
-    // Cola de Email Notifications con Dead Letter habilitado
-    await rmqChannel.assertQueue(EMAIL_QUEUE, {
-      durable: true,
-      arguments: {
-        "x-dead-letter-exchange": DLQ_EXCHANGE,
-        "x-dead-letter-routing-key": "dead_letter",
-        "x-max-priority": 10,
-      },
+    await assertChannelQueues(rmqChannel, {
+      queueName: EMAIL_QUEUE,
+      bindPattern: ROUTING_KEYS.DELIVERY_PATTERNS.EMAIL,
+      channelType: "email",
+      retryRoutingKey: OUTBOUND_EVENTS.INTERNAL_JOBS.EMAIL_RETRY,
     });
-    await rmqChannel.bindQueue(EMAIL_QUEUE, EXCHANGE_NOTIFICATIONS, "email.#");
 
-    // Límite de prefetch controlado para no saturar memoria
-    rmqChannel.prefetch(10);
+    const prefetchCount = config.batch?.rabbitmqPrefetch || 20;
+    rmqChannel.prefetch(prefetchCount);
 
     isRmqConnected = true;
-    console.log("[NotificationQueue] Conectado exitosamente a RabbitMQ (Colas activas: Push, Email, DLQ).");
+    console.log(
+      `[NotificationQueue] Conectado a RabbitMQ (consumers=${startConsumers}, prefetch=${prefetchCount}, DLQ+RetryTTL activos).`,
+    );
 
-    // Iniciar consumidores desacoplados
-    startRmqConsumers();
+    if (startConsumers) {
+      startRmqConsumers();
+    }
   } catch (error) {
     console.warn(
-      `[NotificationQueue] No se pudo conectar a RabbitMQ (${error.message}). Operando con cola resiliente en memoria con control de flujo.`,
+      `[NotificationQueue] No se pudo conectar a RabbitMQ (${error.message}). Operando con cola resiliente en memoria.`,
     );
     isRmqConnected = false;
   }
 }
 
-/**
- * Encola un trabajo de notificación Push de forma no bloqueante.
- * CRIT-03: Responde inmediatamente al cliente (202 Accepted) desacoplando la petición HTTP del envío.
- *
- * @param {object} payload - Datos de la notificación push
- * @returns {Promise<{jobId: string, status: string, queuedAt: string}>}
- */
-async function enqueuePush(payload) {
+function isRabbitMQConnected() {
+  return Boolean(isRmqConnected && rmqChannel);
+}
+
+function resolvePushRoutingKey(payload) {
+  if (payload.topic) return OUTBOUND_EVENTS.INTERNAL_JOBS.PUSH_TOPIC;
+  if (payload.jobKind === JOB_KINDS.USERS_BATCH) {
+    return OUTBOUND_EVENTS.INTERNAL_JOBS.PUSH_BATCH;
+  }
+  return OUTBOUND_EVENTS.INTERNAL_JOBS.PUSH_DIRECT;
+}
+
+function resolveEmailRoutingKey(payload) {
+  if (payload.jobKind === JOB_KINDS.USERS_LOOKUP_FANOUT) {
+    return OUTBOUND_EVENTS.INTERNAL_JOBS.EMAIL_LOOKUP;
+  }
+  if (payload.template) return OUTBOUND_EVENTS.INTERNAL_JOBS.EMAIL_TEMPLATE;
+  return OUTBOUND_EVENTS.INTERNAL_JOBS.EMAIL_RAW;
+}
+
+async function enqueueJob({
+  type,
+  payload,
+  routingKey,
+  memoryQueue,
+  priority,
+  overloadMessage,
+}) {
   const jobId = uuidv4();
   const job = {
     jobId,
-    type: "PUSH",
+    type,
     payload,
     attempts: 0,
-    maxAttempts: 3,
+    maxAttempts: RETRY_POLICY.MAX_ATTEMPTS,
     queuedAt: new Date().toISOString(),
   };
 
   if (isRmqConnected && rmqChannel) {
     try {
-      const routingKey = payload.topic ? "push.topic" : "push.direct";
       const buffer = Buffer.from(JSON.stringify(job));
       rmqChannel.publish(EXCHANGE_NOTIFICATIONS, routingKey, buffer, {
         persistent: true,
-        priority: payload.priority === "high" ? 8 : 4,
+        priority,
+        headers: { [RETRY_POLICY.RETRY_COUNT_HEADER]: 0 },
       });
 
       return {
@@ -146,20 +215,22 @@ async function enqueuePush(payload) {
         queuedAt: job.queuedAt,
       };
     } catch (publishErr) {
-      console.warn("[NotificationQueue] Fallo al publicar en RabbitMQ. Redirigiendo a memoria:", publishErr.message);
+      console.warn(
+        `[NotificationQueue] Fallo al publicar ${type} en RabbitMQ. Redirigiendo a memoria:`,
+        publishErr.message,
+      );
     }
   }
 
-  // Backpressure Check: Si la cola en memoria supera el límite de seguridad (ataques DoS de 500 req/s)
-  if (memoryPushQueue.length >= MAX_IN_MEMORY_QUEUE_SIZE) {
-    const error = new Error("Servidor saturado: cola de procesamiento llena. Backpressure activado.");
+  if (memoryQueue.length >= MAX_IN_MEMORY_QUEUE_SIZE) {
+    const error = new Error(overloadMessage);
     error.status = 503;
     error.code = "SERVER_OVERLOAD";
     error.retryAfter = 5;
     throw error;
   }
 
-  memoryPushQueue.push(job);
+  memoryQueue.push(job);
   triggerMemoryQueueProcessor();
 
   return {
@@ -168,103 +239,141 @@ async function enqueuePush(payload) {
     queueType: "memory_buffer",
     queuedAt: job.queuedAt,
   };
+}
+
+/**
+ * Encola un trabajo de notificación Push de forma no bloqueante.
+ */
+async function enqueuePush(payload) {
+  return enqueueJob({
+    type: "PUSH",
+    payload,
+    routingKey: resolvePushRoutingKey(payload),
+    memoryQueue: memoryPushQueue,
+    priority: payload.priority === NOTIFICATION_PRIORITIES.HIGH ? 8 : 4,
+    overloadMessage:
+      "Servidor saturado: cola de procesamiento push llena. Backpressure activado.",
+  });
 }
 
 /**
  * Encola un trabajo de Email de forma no bloqueante.
- *
- * @param {object} payload - Datos del correo
- * @returns {Promise<{jobId: string, status: string, queuedAt: string}>}
  */
 async function enqueueEmail(payload) {
-  const jobId = uuidv4();
-  const job = {
-    jobId,
+  return enqueueJob({
     type: "EMAIL",
     payload,
-    attempts: 0,
-    maxAttempts: 3,
-    queuedAt: new Date().toISOString(),
-  };
+    routingKey: resolveEmailRoutingKey(payload),
+    memoryQueue: memoryEmailQueue,
+    priority: payload.priority === NOTIFICATION_PRIORITIES.HIGH ? 7 : 4,
+    overloadMessage:
+      "Servidor saturado: cola de emails llena. Backpressure activado.",
+  });
+}
 
-  if (isRmqConnected && rmqChannel) {
+async function handleRmqFailure(msg, channelType, job, err) {
+  const retryCount = Number(
+    msg.properties?.headers?.[RETRY_POLICY.RETRY_COUNT_HEADER] ??
+      job?.attempts ??
+      0,
+  );
+  const maxAttempts = job?.maxAttempts ?? RETRY_POLICY.MAX_ATTEMPTS;
+
+  if (!isPermanentError(err) && retryCount < maxAttempts) {
+    const nextAttempt = retryCount + 1;
+    const retryQueue = getRetryQueueName(channelType, retryCount);
+    const updatedJob = { ...job, attempts: nextAttempt, lastError: err.message };
+
     try {
-      const routingKey = payload.template ? "email.template" : "email.raw";
-      const buffer = Buffer.from(JSON.stringify(job));
-      rmqChannel.publish(EXCHANGE_NOTIFICATIONS, routingKey, buffer, {
-        persistent: true,
-      });
-
-      return {
-        jobId,
-        status: "queued",
-        queueType: "rabbitmq",
-        queuedAt: job.queuedAt,
-      };
-    } catch (publishErr) {
-      console.warn("[NotificationQueue] Fallo al publicar en RabbitMQ. Redirigiendo a memoria:", publishErr.message);
+      rmqChannel.sendToQueue(
+        retryQueue,
+        Buffer.from(JSON.stringify(updatedJob)),
+        {
+          persistent: true,
+          headers: {
+            ...(msg.properties?.headers || {}),
+            [RETRY_POLICY.RETRY_COUNT_HEADER]: nextAttempt,
+          },
+        },
+      );
+      rmqChannel.ack(msg);
+      return;
+    } catch (requeueErr) {
+      console.error(
+        `[NotificationQueue:${channelType}] Error al reencolar en ${retryQueue}:`,
+        requeueErr.message,
+      );
     }
   }
 
-  if (memoryEmailQueue.length >= MAX_IN_MEMORY_QUEUE_SIZE) {
-    const error = new Error("Servidor saturado: cola de emails llena. Backpressure activado.");
-    error.status = 503;
-    error.code = "SERVER_OVERLOAD";
-    error.retryAfter = 5;
-    throw error;
-  }
-
-  memoryEmailQueue.push(job);
-  triggerMemoryQueueProcessor();
-
-  return {
-    jobId,
-    status: "queued",
-    queueType: "memory_buffer",
-    queuedAt: job.queuedAt,
-  };
+  rmqChannel.nack(msg, false, false);
 }
 
 /**
- * Consumidores de RabbitMQ desacoplados con control de flujo y reintentos.
+ * Consumidores de RabbitMQ desacoplados con control de flujo, retry TTL y DLQ.
  */
 function startRmqConsumers() {
   if (!rmqChannel) return;
 
-  // Consumidor de Push
   rmqChannel.consume(
     PUSH_QUEUE,
     async (msg) => {
       if (!msg) return;
+      let job = null;
       try {
-        const job = JSON.parse(msg.content.toString());
+        job = JSON.parse(msg.content.toString());
         await processPushJob(job);
         rmqChannel.ack(msg);
       } catch (err) {
-        console.error("[NotificationQueue:PushWorker] Error procesando push:", err.message);
-        // Si es un error transitorio y no ha superado reintentos, nack sin requeue para mandar a DLQ
-        rmqChannel.nack(msg, false, false);
+        console.error(
+          "[NotificationQueue:PushWorker] Error procesando push:",
+          err.message,
+        );
+        await handleRmqFailure(msg, "push", job, err);
       }
     },
     { noAck: false },
   );
 
-  // Consumidor de Email
   rmqChannel.consume(
     EMAIL_QUEUE,
     async (msg) => {
       if (!msg) return;
+      let job = null;
       try {
-        const job = JSON.parse(msg.content.toString());
+        job = JSON.parse(msg.content.toString());
         await processEmailJob(job);
         rmqChannel.ack(msg);
       } catch (err) {
-        console.error("[NotificationQueue:EmailWorker] Error procesando email:", err.message);
-        rmqChannel.nack(msg, false, false);
+        console.error(
+          "[NotificationQueue:EmailWorker] Error procesando email:",
+          err.message,
+        );
+        await handleRmqFailure(msg, "email", job, err);
       }
     },
     { noAck: false },
   );
+}
+
+function scheduleMemoryRetry(job, queue, err) {
+  if (isPermanentError(err)) return;
+  const maxAttempts = job.maxAttempts ?? 3;
+  if (job.attempts >= maxAttempts) return;
+  if (queue.length >= MAX_IN_MEMORY_QUEUE_SIZE) return;
+
+  job.attempts += 1;
+  const delayMs = Math.min(1000 * 2 ** (job.attempts - 1), 10000);
+  const timer = setTimeout(() => {
+    pendingRetryTimers.delete(timer);
+    if (queue.length < MAX_IN_MEMORY_QUEUE_SIZE) {
+      queue.push(job);
+      triggerMemoryQueueProcessor();
+    }
+  }, delayMs);
+
+  if (typeof timer.unref === "function") timer.unref();
+  pendingRetryTimers.add(timer);
 }
 
 /**
@@ -289,6 +398,7 @@ function triggerMemoryQueueProcessor() {
                 `[NotificationQueue:MemoryWorker] Fallo en push ${pushJob.jobId}:`,
                 err.message,
               );
+              scheduleMemoryRetry(pushJob, memoryPushQueue, err);
             })
             .finally(() => {
               activePushTasks--;
@@ -307,6 +417,7 @@ function triggerMemoryQueueProcessor() {
                 `[NotificationQueue:MemoryWorker] Fallo en email ${emailJob.jobId}:`,
                 err.message,
               );
+              scheduleMemoryRetry(emailJob, memoryEmailQueue, err);
             })
             .finally(() => {
               activeEmailTasks--;
@@ -315,8 +426,10 @@ function triggerMemoryQueueProcessor() {
         }
       }
 
-      // Pequeño yield para ceder el event loop si hay muchas tareas
-      if (activePushTasks >= MAX_CONCURRENT_PUSH && activeEmailTasks >= MAX_CONCURRENT_EMAIL) {
+      if (
+        activePushTasks >= MAX_CONCURRENT_PUSH &&
+        activeEmailTasks >= MAX_CONCURRENT_EMAIL
+      ) {
         break;
       }
     }
@@ -336,10 +449,14 @@ function setCustomHandlers(handlers = {}) {
 function clearMemoryQueue() {
   memoryPushQueue.length = 0;
   memoryEmailQueue.length = 0;
+  for (const timer of pendingRetryTimers) {
+    clearTimeout(timer);
+  }
+  pendingRetryTimers.clear();
 }
 
 /**
- * Procesa un trabajo de Push Notification llamando a pushService protegido por CircuitBreaker.
+ * Procesa un trabajo de Push Notification llamando a pushService/pushChannel protegido por CircuitBreaker.
  */
 async function processPushJob(job) {
   if (customPushHandler) {
@@ -349,21 +466,44 @@ async function processPushJob(job) {
   const pushService = require("./pushService");
   const { payload } = job;
 
-  return fcmCircuitBreaker.execute(async () => {
-    if (payload.token) {
-      return pushService.sendToTokenDirect(payload.token, payload);
-    } else if (payload.tokens && Array.isArray(payload.tokens)) {
-      return pushService.sendToTokensDirect(payload.tokens, payload);
-    } else if (payload.topic) {
-      return pushService.sendToTopicDirect(payload.topic, payload);
-    } else {
-      throw new Error("Payload de notificación push inválido: falta token, tokens o topic");
+  if (payload.jobKind === JOB_KINDS.USERS_BATCH) {
+    const pushChannel = require("./channels/pushChannel");
+    return pushChannel.processUsersBatchJob(payload, fcmCircuitBreaker);
+  }
+
+  if (payload.token) {
+    return fcmCircuitBreaker.execute(() =>
+      pushService.sendToTokenDirect(payload.token, payload),
+    );
+  }
+
+  if (Array.isArray(payload.tokens)) {
+    const results = [];
+    for (const chunk of chunkArray(payload.tokens, 500)) {
+      const chunkRes = await fcmCircuitBreaker.execute(() =>
+        pushService.sendToTokensDirect(chunk, payload),
+      );
+      results.push(...chunkRes);
     }
-  });
+    return results;
+  }
+
+  if (payload.topic) {
+    return fcmCircuitBreaker.execute(() =>
+      pushService.sendToTopicDirect(payload.topic, payload),
+    );
+  }
+
+  const err = new Error(
+    "Payload de notificación push inválido: falta token, tokens, topic o userIds",
+  );
+  err.code = "INVALID_PAYLOAD";
+  err.isPermanent = true;
+  throw err;
 }
 
 /**
- * Procesa un trabajo de Email llamando a emailService protegido por CircuitBreaker.
+ * Procesa un trabajo de Email llamando a emailService/emailChannel protegido por CircuitBreaker.
  */
 async function processEmailJob(job) {
   if (customEmailHandler) {
@@ -373,21 +513,39 @@ async function processEmailJob(job) {
   const emailService = require("./emailService");
   const { payload } = job;
 
-  return smtpCircuitBreaker.execute(async () => {
-    if (payload.template) {
-      return emailService.sendTemplatedEmailDirect(payload);
-    } else if (payload.batch && Array.isArray(payload.emails)) {
-      return emailService.sendBatchEmailsDirect(payload.emails);
-    } else {
-      return emailService.sendEmailDirect(payload);
+  if (payload.jobKind === JOB_KINDS.USERS_LOOKUP_FANOUT) {
+    const emailChannel = require("./channels/emailChannel");
+    return emailChannel.processLookupFanoutJob(payload);
+  }
+
+  if (payload.template) {
+    return smtpCircuitBreaker.execute(() =>
+      emailService.sendTemplatedEmailDirect(payload),
+    );
+  }
+
+  if (payload.batch && Array.isArray(payload.emails)) {
+    const results = [];
+    for (const email of payload.emails) {
+      const res = await smtpCircuitBreaker.execute(() =>
+        emailService.sendEmailDirect(email),
+      );
+      results.push({ to: email.to, success: true, ...res });
     }
-  });
+    return results;
+  }
+
+  return smtpCircuitBreaker.execute(() =>
+    emailService.sendEmailDirect(payload),
+  );
 }
 
 /**
  * Obtiene métricas del estado de la cola y circuit breakers (Health Probes).
  */
 function getQueueHealth() {
+  const userDirectoryService = require("./userDirectoryService");
+
   return {
     rabbitmqConnected: isRmqConnected,
     memoryQueue: {
@@ -400,6 +558,7 @@ function getQueueHealth() {
     circuitBreakers: {
       fcm: fcmCircuitBreaker.getStatus(),
       smtp: smtpCircuitBreaker.getStatus(),
+      usersService: userDirectoryService.usersCircuitBreaker.getStatus(),
     },
   };
 }
@@ -408,27 +567,34 @@ function getQueueHealth() {
  * Cierre limpio de RabbitMQ para graceful shutdown.
  */
 async function closeRabbitMQ() {
+  clearMemoryQueue();
   try {
     if (rmqChannel) await rmqChannel.close();
-  } catch (err) {
+  } catch (_err) {
     // ignorar error de cierre
   }
   try {
     if (rmqConnection) await rmqConnection.close();
-  } catch (err) {
+  } catch (_err) {
     // ignorar error de cierre
   }
+  rmqChannel = null;
+  rmqConnection = null;
   isRmqConnected = false;
 }
 
 module.exports = {
   initRabbitMQ,
+  isRabbitMQConnected,
   enqueuePush,
   enqueueEmail,
   processPushJob,
   processEmailJob,
   setCustomHandlers,
   clearMemoryQueue,
+  isPermanentError,
+  getRetryQueueName,
+  RETRY_STEPS,
   fcmCircuitBreaker,
   smtpCircuitBreaker,
   getQueueHealth,

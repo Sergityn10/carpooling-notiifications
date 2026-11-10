@@ -1,5 +1,7 @@
 const emailService = require("../services/emailService");
+const notificationQueue = require("../services/notificationQueue");
 const config = require("../config");
+const { INBOUND_EVENTS, EMAIL_TEMPLATES } = require("../constants");
 
 const HANDLER_NAME = "suggestionEventHandler";
 
@@ -45,11 +47,19 @@ async function handleSuggestionCreated(data) {
     frontendUrl: config.frontendUrl,
   };
 
-  const result = await emailService.sendTemplatedEmail({
-    to: config.adminEmail,
-    template: "suggestion_received",
-    data: templateData,
-  });
+  if (notificationQueue.isRabbitMQConnected()) {
+    await notificationQueue.enqueueEmail({
+      to: config.adminEmail,
+      template: EMAIL_TEMPLATES.SUGGESTION_RECEIVED,
+      data: templateData,
+    });
+  } else {
+    await emailService.sendTemplatedEmail({
+      to: config.adminEmail,
+      template: EMAIL_TEMPLATES.SUGGESTION_RECEIVED,
+      data: templateData,
+    });
+  }
 
   console.log(
     `[${HANDLER_NAME}] Email de sugerencia enviado a ${config.adminEmail} (suggestion_id=${suggestion_id})`,
@@ -57,7 +67,7 @@ async function handleSuggestionCreated(data) {
 }
 
 const EVENT_HANDLERS = {
-  "suggestion.created": handleSuggestionCreated,
+  [INBOUND_EVENTS.SUGGESTION.CREATED]: handleSuggestionCreated,
 };
 
 async function handle(eventType, data) {

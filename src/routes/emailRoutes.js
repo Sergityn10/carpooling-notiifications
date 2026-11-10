@@ -44,13 +44,22 @@ router.post(
   emailController.sendSuggestionReceived,
 );
 
-// Envío masivo por lotes (Batch): restringido a administradores (BFLA/Anti-spam) + limitador masivo
+// Envío masivo por lotes (Batch raw): restringido a administradores (BFLA/Anti-spam) + limitador masivo
 router.post(
   "/send/batch",
   bulkNotificationLimiter,
   requireAuth,
   requireAdmin,
   emailController.sendBatchEmails,
+);
+
+// Envío masivo por plantilla con userIds (ms-usuarios) o recipients
+router.post(
+  "/send/batch/template",
+  requireAuth,
+  requireAdmin,
+  bulkNotificationLimiter,
+  emailController.sendBatchTemplatedEmails,
 );
 
 module.exports = router;

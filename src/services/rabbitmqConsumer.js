@@ -1,20 +1,31 @@
 const amqp = require("amqplib");
 const config = require("../config");
+const {
+  EXCHANGES,
+  EXCHANGE_TYPES,
+  QUEUES,
+  ROUTING_KEYS,
+} = require("../constants");
 const userEventHandler = require("../handlers/userEventHandler");
 const suggestionEventHandler = require("../handlers/suggestionEventHandler");
 const enterpriseEventHandler = require("../handlers/enterpriseEventHandler");
+const tripEventHandler = require("../handlers/tripEventHandler");
 
-const EXCHANGE = "carpooling_events";
-const EXCHANGE_TYPE = "topic";
+const EXCHANGE = EXCHANGES.DOMAIN_EVENTS;
+const EXCHANGE_TYPE = EXCHANGE_TYPES.TOPIC;
+const DLQ_EXCHANGE = EXCHANGES.DLQ;
 
-const QUEUE_USER = "notifications.user.events";
-const ROUTING_KEY_USER = "user.*";
+const QUEUE_USER = QUEUES.DOMAIN.USER;
+const ROUTING_KEY_USER = ROUTING_KEYS.DOMAIN_PATTERNS.USER;
 
-const QUEUE_SUGGESTION = "notifications.suggestion.events";
-const ROUTING_KEY_SUGGESTION = "suggestion.*";
+const QUEUE_SUGGESTION = QUEUES.DOMAIN.SUGGESTION;
+const ROUTING_KEY_SUGGESTION = ROUTING_KEYS.DOMAIN_PATTERNS.SUGGESTION;
 
-const QUEUE_ENTERPRISE = "notifications.enterprise.events";
-const ROUTING_KEY_ENTERPRISE = "enterprise.*";
+const QUEUE_ENTERPRISE = QUEUES.DOMAIN.ENTERPRISE;
+const ROUTING_KEY_ENTERPRISE = ROUTING_KEYS.DOMAIN_PATTERNS.ENTERPRISE;
+
+const QUEUE_TRIP = QUEUES.DOMAIN.TRIP;
+const ROUTING_KEY_TRIP = ROUTING_KEYS.DOMAIN_PATTERNS.TRIP;
 
 let connection = null;
 let channel = null;
@@ -22,9 +33,10 @@ let reconnectTimer = null;
 let isShuttingDown = false;
 
 const ROUTING_KEY_HANDLERS = {
-  "user.*": userEventHandler,
-  "suggestion.*": suggestionEventHandler,
-  "enterprise.*": enterpriseEventHandler,
+  [ROUTING_KEY_USER]: userEventHandler,
+  [ROUTING_KEY_SUGGESTION]: suggestionEventHandler,
+  [ROUTING_KEY_ENTERPRISE]: enterpriseEventHandler,
+  [ROUTING_KEY_TRIP]: tripEventHandler,
 };
 
 async function startConsumer() {
@@ -58,6 +70,9 @@ async function startConsumer() {
     await channel.assertExchange(EXCHANGE, EXCHANGE_TYPE, {
       durable: true,
     });
+    await channel.assertExchange(DLQ_EXCHANGE, EXCHANGE_TYPES.DIRECT, {
+      durable: true,
+    });
 
     const userQueue = await channel.assertQueue(QUEUE_USER, { durable: true });
     await channel.bindQueue(userQueue.queue, EXCHANGE, ROUTING_KEY_USER);
@@ -80,7 +95,16 @@ async function startConsumer() {
       ROUTING_KEY_ENTERPRISE,
     );
 
-    channel.prefetch(1);
+    const tripQueue = await channel.assertQueue(QUEUE_TRIP, {
+      durable: true,
+      arguments: {
+        "x-dead-letter-exchange": DLQ_EXCHANGE,
+        "x-dead-letter-routing-key": ROUTING_KEYS.DLQ,
+      },
+    });
+    await channel.bindQueue(tripQueue.queue, EXCHANGE, ROUTING_KEY_TRIP);
+
+    channel.prefetch(10);
 
     console.log(
       `[RabbitMQ] Escuchando "${ROUTING_KEY_USER}" en "${QUEUE_USER}"`,
@@ -91,22 +115,31 @@ async function startConsumer() {
     console.log(
       `[RabbitMQ] Escuchando "${ROUTING_KEY_ENTERPRISE}" en "${QUEUE_ENTERPRISE}"`,
     );
+    console.log(
+      `[RabbitMQ] Escuchando "${ROUTING_KEY_TRIP}" en "${QUEUE_TRIP}"`,
+    );
 
     channel.consume(
       userQueue.queue,
-      (msg) => processMessage(msg, channel, "user.*"),
+      (msg) => processMessage(msg, channel, ROUTING_KEY_USER),
       { noAck: false },
     );
 
     channel.consume(
       suggestionQueue.queue,
-      (msg) => processMessage(msg, channel, "suggestion.*"),
+      (msg) => processMessage(msg, channel, ROUTING_KEY_SUGGESTION),
       { noAck: false },
     );
 
     channel.consume(
       enterpriseQueue.queue,
-      (msg) => processMessage(msg, channel, "enterprise.*"),
+      (msg) => processMessage(msg, channel, ROUTING_KEY_ENTERPRISE),
+      { noAck: false },
+    );
+
+    channel.consume(
+      tripQueue.queue,
+      (msg) => processMessage(msg, channel, ROUTING_KEY_TRIP),
       { noAck: false },
     );
   } catch (error) {
@@ -122,7 +155,7 @@ async function processMessage(msg, ch, routingPattern) {
     const content = JSON.parse(msg.content.toString());
     const routingKey = msg.fields.routingKey;
 
-    console.log(`[RabbitMQ] Evento recibido: ${routingKey}`, content);
+    console.log(`[RabbitMQ] Evento recibido: ${routingKey}`);
 
     const handler = ROUTING_KEY_HANDLERS[routingPattern];
     const eventData = content.data !== undefined ? content.data : content;
@@ -136,6 +169,21 @@ async function processMessage(msg, ch, routingPattern) {
     ch.ack(msg);
   } catch (error) {
     console.error("[RabbitMQ] Error procesando mensaje:", error.message);
+
+    if (routingPattern !== ROUTING_KEY_TRIP && typeof ch.publish === "function") {
+      try {
+        ch.publish(DLQ_EXCHANGE, ROUTING_KEYS.DLQ, msg.content, {
+          persistent: true,
+          headers: {
+            "x-original-routing-key": msg.fields?.routingKey || routingPattern,
+            "x-error": error.message,
+          },
+        });
+      } catch (_dlqErr) {
+        // Ignorar fallo secundario al publicar a DLQ
+      }
+    }
+
     ch.nack(msg, false, false);
   }
 }
@@ -176,4 +224,6 @@ module.exports = {
   ROUTING_KEY_HANDLERS,
   QUEUE_ENTERPRISE,
   ROUTING_KEY_ENTERPRISE,
+  QUEUE_TRIP,
+  ROUTING_KEY_TRIP,
 };

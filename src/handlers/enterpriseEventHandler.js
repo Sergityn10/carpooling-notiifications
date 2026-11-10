@@ -1,6 +1,8 @@
 const emailService = require("../services/emailService");
 const templateService = require("../services/templateService");
+const notificationQueue = require("../services/notificationQueue");
 const config = require("../config");
+const { INBOUND_EVENTS, EMAIL_TEMPLATES } = require("../constants");
 
 const HANDLER_NAME = "enterpriseEventHandler";
 
@@ -68,17 +70,25 @@ async function handleEnterpriseMemberInvited(data) {
     frontendUrl: config.frontendUrl || "",
   };
 
-  const { subject, html, text } = templateService.renderTemplate(
-    "enterprise_invitation",
-    templateData,
-  );
+  if (notificationQueue.isRabbitMQConnected()) {
+    await notificationQueue.enqueueEmail({
+      to: email,
+      template: EMAIL_TEMPLATES.ENTERPRISE_INVITATION,
+      data: templateData,
+    });
+  } else {
+    const { subject, html, text } = templateService.renderTemplate(
+      EMAIL_TEMPLATES.ENTERPRISE_INVITATION,
+      templateData,
+    );
 
-  await emailService.sendEmail({
-    to: email,
-    subject,
-    html,
-    text,
-  });
+    await emailService.sendEmail({
+      to: email,
+      subject,
+      html,
+      text,
+    });
+  }
 
   console.log(
     `[${HANDLER_NAME}] Email de invitación enviado a ${email} para unirse a ${enterprise_name} con rol ${roleTitle} (enterprise_id=${enterprise_id})`,
@@ -86,7 +96,7 @@ async function handleEnterpriseMemberInvited(data) {
 }
 
 const EVENT_HANDLERS = {
-  "enterprise.member.invited": handleEnterpriseMemberInvited,
+  [INBOUND_EVENTS.ENTERPRISE.MEMBER_INVITED]: handleEnterpriseMemberInvited,
 };
 
 async function handle(eventType, data) {

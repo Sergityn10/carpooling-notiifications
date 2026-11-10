@@ -5,6 +5,7 @@ const prisma = require("./lib/prisma");
 const emailRoutes = require("./routes/emailRoutes");
 const pushRoutes = require("./routes/pushRoutes");
 const deviceTokenRoutes = require("./routes/deviceTokenRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const { startConsumer, stopConsumer } = require("./services/rabbitmqConsumer");
 const notificationQueue = require("./services/notificationQueue");
@@ -133,6 +134,7 @@ app.get("/health/metrics", (req, res) => {
 app.use("/api/emails", emailRoutes);
 app.use("/api/push", pushRoutes);
 app.use("/api/device-tokens", deviceTokenRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // 7. Manejadores de 404 y Errores
 app.use(notFound);
@@ -144,12 +146,14 @@ let server = null;
 if (require.main === module) {
   server = app.listen(config.port, async () => {
     console.log(
-      `[Server] Notifications service running on port ${config.port} [${config.nodeEnv}]`,
+      `[Server] Notifications service running on port ${config.port} [${config.nodeEnv}] (runWorkers=${config.runWorkers})`,
     );
-    // Iniciar consumidor de eventos de negocio RabbitMQ
-    startConsumer();
-    // Iniciar colas asíncronas de notificaciones
-    await notificationQueue.initRabbitMQ();
+    if (config.runWorkers) {
+      // Iniciar consumidor de eventos de negocio RabbitMQ en modo acoplado
+      startConsumer();
+    }
+    // Inicializar RabbitMQ (publicador siempre activo; consumidores según RUN_WORKERS)
+    await notificationQueue.initRabbitMQ({ startConsumers: config.runWorkers });
   });
 }
 

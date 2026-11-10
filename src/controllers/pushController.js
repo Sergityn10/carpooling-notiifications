@@ -1,13 +1,15 @@
+const { v4: uuidv4 } = require("uuid");
+const config = require("../config");
 const pushService = require("../services/pushService");
 const pushTemplateService = require("../services/pushTemplateService");
 const deviceTokenService = require("../services/deviceTokenService");
 const notificationQueue = require("../services/notificationQueue");
+const pushChannel = require("../services/channels/pushChannel");
 const { sanitizeString } = require("../security");
+const { deduplicateIds } = require("../utils/templateInterpolator");
 
 /**
  * Envío de push a un token de dispositivo individual.
- * CRIT-03: Por defecto procesa de forma asíncrona no bloqueante (202 Accepted)
- * para absorber ráfagas concurrentes sin colapsar el event loop.
  */
 async function sendToToken(req, res, next) {
   try {
@@ -34,13 +36,11 @@ async function sendToToken(req, res, next) {
       badge,
     };
 
-    // Procesamiento síncrono opcional (sólo si se especifica explícitamente sync=true)
     if (sync === true || req.query.sync === "true") {
       const result = await pushService.sendToTokenDirect(payload.token, payload);
       return res.status(200).json({ success: true, ...result });
     }
 
-    // Modo asíncrono no bloqueante (Recomendado y por defecto)
     const queueResult = await notificationQueue.enqueuePush(payload);
     return res.status(202).json({
       success: true,
@@ -54,7 +54,6 @@ async function sendToToken(req, res, next) {
 
 /**
  * Envío masivo de push a múltiples tokens (Multicast).
- * Requiere rol administrador o servicio interno.
  */
 async function sendToTokens(req, res, next) {
   try {
@@ -110,8 +109,88 @@ async function sendToTokens(req, res, next) {
 }
 
 /**
+ * Envío masivo de push a una lista de userIds en una sola llamada.
+ * Delega la consulta bulk de tokens a los workers en segundo plano (sin N+1 ni bloqueo HTTP).
+ * POST /api/push/send/users
+ */
+async function sendToUsersBatch(req, res, next) {
+  try {
+    const {
+      userIds,
+      template,
+      data = {},
+      title,
+      body,
+      priority = "high",
+      channelId = "default",
+      badge,
+    } = req.body;
+
+    const uniqueUserIds = deduplicateIds(userIds);
+    if (uniqueUserIds.length === 0) {
+      return res.status(400).json({
+        error: "Se requiere un array 'userIds' con al menos un identificador válido",
+      });
+    }
+
+    const maxRecipients = config.batch.maxRecipients || 5000;
+    if (uniqueUserIds.length > maxRecipients) {
+      return res.status(400).json({
+        error: `El lote excede el máximo permitido (${maxRecipients} usuarios)`,
+      });
+    }
+
+    let finalTitle;
+    let finalBody;
+    let finalData = data || {};
+
+    if (template) {
+      try {
+        const rendered = pushTemplateService.renderPushTemplate(template, data);
+        finalTitle = rendered.title;
+        finalBody = rendered.body;
+        finalData = { ...rendered.data, ...(data || {}) };
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+    } else {
+      if (!title) {
+        return res.status(400).json({
+          error: "Se requiere 'template' o los campos 'title' y 'body'",
+        });
+      }
+      if (!body) {
+        return res.status(400).json({ error: "El campo 'body' es obligatorio" });
+      }
+      finalTitle = sanitizeString(title, 200);
+      finalBody = sanitizeString(body, 1000);
+    }
+
+    const batchId = uuidv4();
+    const result = await pushChannel.enqueueBatch({
+      batchId,
+      title: finalTitle,
+      body: finalBody,
+      data: finalData,
+      priority,
+      channelId,
+      badge,
+      userIds: uniqueUserIds,
+    });
+
+    return res.status(202).json({
+      success: true,
+      message: "Lote de notificaciones push por usuarios encolado satisfactoriamente.",
+      batchId,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Envío de push a todos los dispositivos registrados de un usuario.
- * Control ABAC: Un usuario común sólo puede auto-notificarse; admins o servicios pueden notificar a cualquiera.
  */
 async function sendToUser(req, res, next) {
   try {
@@ -128,7 +207,6 @@ async function sendToUser(req, res, next) {
       return res.status(400).json({ error: "El campo 'body' es obligatorio" });
     }
 
-    // Control de autorización (BOLA / Ownership)
     const targetUserId = String(userId);
     const requesterId = String(req.user.userId || req.user.id);
     const isPrivileged = req.user.role === "admin" || req.user.isService;
@@ -187,7 +265,6 @@ async function sendToUser(req, res, next) {
 
 /**
  * Envío a tópicos generales de Firebase.
- * Restringido a administradores (MED-08).
  */
 async function sendToTopic(req, res, next) {
   try {
@@ -345,6 +422,7 @@ async function sendTemplatedToUser(req, res, next) {
 module.exports = {
   sendToToken,
   sendToTokens,
+  sendToUsersBatch,
   sendToUser,
   sendTemplatedToUser,
   sendToTopic,

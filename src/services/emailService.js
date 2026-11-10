@@ -16,9 +16,9 @@ function getTransporter() {
       user: config.smtp.user,
       pass: config.smtp.pass,
     },
-    // Opciones de pool y timeouts para robustez
+    // Opciones de pool y timeouts ajustadas para no saturar Zoho/Gmail en workers
     pool: true,
-    maxConnections: 5,
+    maxConnections: config.smtp.maxConnections || 3,
     maxMessages: 100,
     connectionTimeout: 10000,
     greetingTimeout: 10000,
@@ -52,7 +52,14 @@ async function sendEmailDirect({ to, subject, html, text, cc, bcc, replyTo }) {
   };
 }
 
-async function sendTemplatedEmailDirect({ to, template, data, cc, bcc, replyTo }) {
+async function sendTemplatedEmailDirect({
+  to,
+  template,
+  data,
+  cc,
+  bcc,
+  replyTo,
+}) {
   const { subject, html, text } = renderTemplate(template, data);
   return sendEmailDirect({ to, subject, html, text, cc, bcc, replyTo });
 }

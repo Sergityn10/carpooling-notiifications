@@ -1,40 +1,42 @@
+const { PUSH_TEMPLATES: PUSH_TEMPLATE_NAMES } = require("../constants");
+const { interpolate } = require("../utils/templateInterpolator");
+
 const PUSH_TEMPLATES = {
-  trip_completed: {
+  [PUSH_TEMPLATE_NAMES.TRIP_ALERT_MATCHED]: {
+    title: "¡Nuevo viaje {{origin}} → {{destination}}! 🚗",
+    body: "Sale el {{date}} a las {{time}} desde {{price}}. ¡Échale un vistazo antes de que se llene!",
+    data: {
+      type: PUSH_TEMPLATE_NAMES.TRIP_ALERT_MATCHED,
+      tripId: "{{tripId}}",
+    },
+  },
+  [PUSH_TEMPLATE_NAMES.TRIP_COMPLETED]: {
     title: "Viaje completado 🎉",
     body: "Hola {{userName}}, tu viaje {{origin}} → {{destination}} ha finalizado. ¡Gracias por usar YouConnext!",
     data: {
-      type: "trip_completed",
+      type: PUSH_TEMPLATE_NAMES.TRIP_COMPLETED,
       tripId: "{{tripId}}",
     },
   },
-  trip_started: {
+  [PUSH_TEMPLATE_NAMES.TRIP_STARTED]: {
     title: "El viaje ha comenzado 🚗",
     body: "Tu viaje {{origin}} → {{destination}} ha empezado. ¡Buen camino!",
     data: {
-      type: "trip_started",
+      type: PUSH_TEMPLATE_NAMES.TRIP_STARTED,
       tripId: "{{tripId}}",
     },
   },
-  trip_booked: {
+  [PUSH_TEMPLATE_NAMES.TRIP_BOOKED]: {
     title: "Nueva reserva en tu viaje 🧑‍🤝‍🧑",
     body: "{{passengerName}} ha reservado {{seatsBooked}} asiento(s) en tu viaje {{origin}} → {{destination}}.",
     data: {
-      type: "trip_booked",
+      type: PUSH_TEMPLATE_NAMES.TRIP_BOOKED,
       tripId: "{{tripId}}",
       passengerName: "{{passengerName}}",
       seatsBooked: "{{seatsBooked}}",
     },
   },
 };
-
-function interpolate(text, data) {
-  let result = text;
-  for (const [key, value] of Object.entries(data)) {
-    const regex = new RegExp(`{{\\s*${key}\\s*}}`, "g");
-    result = result.replace(regex, String(value ?? ""));
-  }
-  return result;
-}
 
 function renderPushTemplate(templateName, data = {}) {
   const template = PUSH_TEMPLATES[templateName];
@@ -56,6 +58,10 @@ function renderPushTemplate(templateName, data = {}) {
   return { title, body, data: interpolatedData };
 }
 
+function hasPushTemplate(templateName) {
+  return Boolean(PUSH_TEMPLATES[templateName]);
+}
+
 function listPushTemplates() {
   return Object.keys(PUSH_TEMPLATES).map((name) => ({
     name,
@@ -65,6 +71,7 @@ function listPushTemplates() {
 
 module.exports = {
   renderPushTemplate,
+  hasPushTemplate,
   listPushTemplates,
   PUSH_TEMPLATES,
 };

@@ -1,4 +1,5 @@
 const rateLimit = require("express-rate-limit");
+const { isValidServiceApiKey } = require("./jwtAuth");
 
 /**
  * Generador de claves para Rate Limiting:
@@ -107,7 +108,8 @@ const notificationBurstLimiter = createRateLimiter({
   message:
     "Ha superado la tasa máxima de envío de notificaciones. Espere un momento.",
   keyGenerator: defaultKeyGenerator,
-  skip: (req) => req.user && req.user.isService === true,
+  skip: (req) =>
+    Boolean(req.user && req.user.isService === true) || isValidServiceApiKey(req),
 });
 
 /**
@@ -120,7 +122,8 @@ const bulkNotificationLimiter = createRateLimiter({
   message:
     "Límite de envíos masivos excedido. Máximo 5 operaciones masivas por minuto.",
   keyGenerator: defaultKeyGenerator,
-  skip: (req) => req.user && req.user.isService === true,
+  skip: (req) =>
+    Boolean(req.user && req.user.isService === true) || isValidServiceApiKey(req),
 });
 
 /**
@@ -132,6 +135,8 @@ const generalApiLimiter = createRateLimiter({
   max: 100,
   message: "Ha excedido el límite general de solicitudes de la API.",
   keyGenerator: defaultKeyGenerator,
+  skip: (req) =>
+    Boolean(req.user && req.user.isService === true) || isValidServiceApiKey(req),
 });
 
 module.exports = {
