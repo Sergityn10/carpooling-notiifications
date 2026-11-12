@@ -6,6 +6,7 @@ const emailRoutes = require("./routes/emailRoutes");
 const pushRoutes = require("./routes/pushRoutes");
 const deviceTokenRoutes = require("./routes/deviceTokenRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const adminNotificationRoutes = require("./routes/adminNotificationRoutes");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const { startConsumer, stopConsumer } = require("./services/rabbitmqConsumer");
 const notificationQueue = require("./services/notificationQueue");
@@ -135,6 +136,7 @@ app.use("/api/emails", emailRoutes);
 app.use("/api/push", pushRoutes);
 app.use("/api/device-tokens", deviceTokenRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/admin/notifications", adminNotificationRoutes);
 
 // 7. Manejadores de 404 y Errores
 app.use(notFound);

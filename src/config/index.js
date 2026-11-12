@@ -23,9 +23,18 @@ const config = {
   userService: {
     url: (process.env.USER_SERVICE_URL || "").replace(/\/$/, ""),
     batchPath: process.env.USER_SERVICE_BATCH_PATH || "/api/users/internal/batch",
+    listPath: process.env.USER_SERVICE_LIST_PATH || "/api/users/internal/list",
     timeoutMs: parseIntEnv(process.env.USER_SERVICE_TIMEOUT_MS, 5000),
     allowDeviceEmailFallback:
       process.env.ALLOW_DEVICE_EMAIL_FALLBACK === "true",
+  },
+  adminNotifications: {
+    maxSyncRecipients: parseIntEnv(process.env.ADMIN_MAX_SYNC_RECIPIENTS, 50),
+    statusCheckTimeoutMs: parseIntEnv(
+      process.env.ADMIN_STATUS_CHECK_TIMEOUT_MS,
+      4000,
+    ),
+    historyMaxEntries: parseIntEnv(process.env.ADMIN_HISTORY_MAX_ENTRIES, 100),
   },
   batch: {
     maxRecipients: parseIntEnv(process.env.MAX_BATCH_RECIPIENTS, 5000),

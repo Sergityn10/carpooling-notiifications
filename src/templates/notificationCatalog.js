@@ -215,6 +215,14 @@ const NOTIFICATION_CATALOG = {
     requiredFields: ["enterpriseName", "roleTitle", "invitationLink"],
     defaults: {},
   },
+  [NOTIFICATION_TYPES.ADMIN_CUSTOM]: {
+    description: "Comunicado o prueba personalizada enviada por administración",
+    channels: [NOTIFICATION_CHANNELS.EMAIL],
+    emailTemplate: EMAIL_TEMPLATES.ADMIN_CUSTOM,
+    pushTemplate: null,
+    requiredFields: ["subject", "title", "message"],
+    defaults: {},
+  },
 };
 
 function getNotificationType(type) {

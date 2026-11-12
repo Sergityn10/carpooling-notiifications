@@ -15,6 +15,7 @@ const NOTIFICATION_TYPES = {
   PASSWORD_RESET: "password_reset",
   SUGGESTION_RECEIVED: "suggestion_received",
   ENTERPRISE_INVITATION: "enterprise_invitation",
+  ADMIN_CUSTOM: "admin_custom",
 };
 
 const NOTIFICATION_CHANNELS = {
@@ -44,6 +45,7 @@ const EMAIL_TEMPLATES = {
   TRIP_BOOKED: "trip_booked",
   TRIP_ALERT_MATCHED: "trip_alert_matched",
   ENTERPRISE_INVITATION: "enterprise_invitation",
+  ADMIN_CUSTOM: "admin_custom",
 };
 
 const PUSH_TEMPLATES = {

@@ -50,6 +50,10 @@ const TEMPLATES = {
     subject: "Invitación para unirte a {{enterpriseName}} en YouConnext",
     file: "enterprise-invitation.html",
   },
+  [EMAIL_TEMPLATES.ADMIN_CUSTOM]: {
+    subject: "{{subject}}",
+    file: "admin-custom.html",
+  },
 };
 
 // Caché en memoria de plantillas HTML para evitar lectura síncrona de disco en envíos batch
@@ -84,6 +88,33 @@ function htmlToText(html) {
     .trim();
 }
 
+function buildSafeMessageHtml(message) {
+  return escapeHtml(message || "").replace(/\r?\n/g, "<br />");
+}
+
+function isSafeHttpUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") return false;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function buildSafeCtaBlock(ctaText, ctaUrl) {
+  if (!ctaText || !isSafeHttpUrl(ctaUrl)) return "";
+  const safeText = escapeHtml(String(ctaText).trim());
+  const safeHref = escapeHtml(String(ctaUrl).trim());
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="margin: 28px 0">
+    <tr>
+      <td align="center">
+        <a href="${safeHref}" style="background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-size: 16px; display: inline-block; font-weight: bold;">${safeText}</a>
+      </td>
+    </tr>
+  </table>`;
+}
+
 function renderTemplate(templateName, data = {}) {
   const template = TEMPLATES[templateName];
   if (!template) {
@@ -99,7 +130,19 @@ function renderTemplate(templateName, data = {}) {
     greetingSuffix: data.userName ? `, ${data.userName}` : "",
   };
 
-  const rawHtml = loadTemplateFile(template.file);
+  let rawHtml = loadTemplateFile(template.file);
+
+  if (templateName === EMAIL_TEMPLATES.ADMIN_CUSTOM) {
+    const safeMessageHtml = buildSafeMessageHtml(enrichedData.message);
+    const safeCtaBlock = buildSafeCtaBlock(
+      enrichedData.ctaText,
+      enrichedData.ctaUrl,
+    );
+    rawHtml = rawHtml
+      .replace(/{{\s*messageHtml\s*}}/g, () => safeMessageHtml)
+      .replace(/{{\s*ctaBlock\s*}}/g, () => safeCtaBlock);
+  }
+
   const html = interpolate(rawHtml, enrichedData, { escapeForHtml: true });
   const text = htmlToText(html);
 

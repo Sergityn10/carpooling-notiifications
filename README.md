@@ -207,6 +207,21 @@ Requieren JWT Bearer.
 | `GET` | `/api/device-tokens/me` | Lista los dispositivos activos del usuario autenticado |
 | `DELETE` | `/api/device-tokens` | Desactiva un dispositivo por `token` o `deviceId` |
 
+### Administración (SOLO ADMIN)
+
+Requieren JWT Bearer con `"role": "admin"`. Consulta la guía completa para el frontend en [`docs/ADMIN_NOTIFICATIONS_API.md`](docs/ADMIN_NOTIFICATIONS_API.md).
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/notifications/status` | Estado integral de la API (BD, SMTP, Firebase/FCM, RabbitMQ, Circuit Breakers y tokens) |
+| `GET` | `/api/admin/notifications/recipients` | Listado paginado de usuarios/dispositivos conocidos |
+| `POST` | `/api/admin/notifications/preview` | Previsualiza alcance según filtros (`all`, `single`, `users`, `filter`) |
+| `POST` | `/api/admin/notifications/email` | Envío de correo personalizado (síncrono para test o asíncrono para lotes) |
+| `POST` | `/api/admin/notifications/push` | Envío de notificación push personalizada con filtros |
+| `POST` | `/api/admin/notifications/send` | Envío multi-canal unificado (Push + Email) |
+| `GET` | `/api/admin/notifications/history` | Historial reciente de envíos lanzados desde administración |
+| `GET` | `/api/admin/notifications/jobs/:batchId` | Consulta un envío admin concreto por `batchId` |
+
 ## Ejemplos
 
 ### Ver estado del servicio

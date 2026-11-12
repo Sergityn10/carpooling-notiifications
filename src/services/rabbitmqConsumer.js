@@ -31,6 +31,9 @@ let connection = null;
 let channel = null;
 let reconnectTimer = null;
 let isShuttingDown = false;
+let isConnected = false;
+let lastConnectedAt = null;
+let lastError = null;
 
 const ROUTING_KEY_HANDLERS = {
   [ROUTING_KEY_USER]: userEventHandler,
@@ -49,12 +52,16 @@ async function startConsumer() {
 
   try {
     connection = await amqp.connect(config.rabbitmqUrl);
+    isConnected = true;
+    lastConnectedAt = new Date().toISOString();
+    lastError = null;
     console.log(
       "[RabbitMQ] Conectado a",
       config.rabbitmqUrl.replace(/\/\/.*@/, "//***@"),
     );
 
     connection.on("close", () => {
+      isConnected = false;
       if (!isShuttingDown) {
         console.warn("[RabbitMQ] Conexión cerrada, reintentando en 5s...");
         scheduleReconnect();
@@ -62,6 +69,8 @@ async function startConsumer() {
     });
 
     connection.on("error", (err) => {
+      isConnected = false;
+      lastError = err.message;
       console.error("[RabbitMQ] Error de conexión:", err.message);
     });
 
@@ -143,6 +152,8 @@ async function startConsumer() {
       { noAck: false },
     );
   } catch (error) {
+    isConnected = false;
+    lastError = error.message;
     console.error("[RabbitMQ] Error al iniciar consumidor:", error.message);
     scheduleReconnect();
   }
@@ -214,13 +225,25 @@ async function stopConsumer() {
     console.error("[RabbitMQ] Error cerrando conexión:", err.message);
   }
 
+  isConnected = false;
   console.log("[RabbitMQ] Consumidor detenido");
+}
+
+function getConsumerStatus() {
+  return {
+    configured: Boolean(config.rabbitmqUrl),
+    connected: Boolean(isConnected && channel),
+    lastConnectedAt,
+    lastError,
+    queues: [QUEUE_USER, QUEUE_SUGGESTION, QUEUE_ENTERPRISE, QUEUE_TRIP],
+  };
 }
 
 module.exports = {
   startConsumer,
   stopConsumer,
   processMessage,
+  getConsumerStatus,
   ROUTING_KEY_HANDLERS,
   QUEUE_ENTERPRISE,
   ROUTING_KEY_ENTERPRISE,
